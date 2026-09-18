@@ -4,7 +4,7 @@
 
 Do **not** open a public issue for a security vulnerability in this tool.
 
-Email `[SECURITY-CONTACT]` with a description, reproduction steps, and impact
+Email `contactus@irocsecurity.com` with a description, reproduction steps, and impact
 assessment. Expect an acknowledgement within 3 business days and a substantive
 response within 10.
 

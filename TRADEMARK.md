@@ -89,7 +89,7 @@ over.
 ## Requests and questions
 
 Written permission for anything above, or a question about whether a particular
-use is covered: `[TRADEMARK-CONTACT]`.
+use is covered: `contactus@irocsecurity.com`.
 
 We will generally say yes to reasonable requests, and we would rather answer a
 question early than send a notice later.
