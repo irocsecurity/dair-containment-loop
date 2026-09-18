@@ -1,0 +1,89 @@
+name: CI
+
+# SUPPLY-CHAIN NOTE: this triggers on `pull_request`, never `pull_request_target`.
+# `pull_request_target` runs with repository secrets in scope against code from a
+# fork, which is the exact mechanism behind real build-pipeline compromises. Fork
+# PRs here run with a read-only token and no secrets. Do not change this trigger.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege by default; jobs elevate only what they need.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff==0.15.11
+      - name: ruff check
+        run: ruff check . --output-format=github
+      - name: ruff format --check
+        run: ruff format --check .
+
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        run: python tests/test_loop.py
+      - name: CLI smoke test
+        # Guardrail must fail closed (exit 3) before any network call is made.
+        run: |
+          set +e
+          python -m dair_containment contain --host WS-1 >/dev/null 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 3 ]; then
+            echo "::error::Guardrail did not fail closed. Expected exit 3, got $code."
+            exit 1
+          fi
+          echo "Guardrail fails closed as expected (exit 3)."
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Tools are installed from PyPI rather than pulled in as third-party
+      # Actions: fewer external repositories with access to this workflow.
+      - name: Install scanners
+        run: pip install 'bandit[toml]==1.7.10' pip-audit==2.7.3
+      - name: bandit (static security analysis)
+        run: bandit -r dair_containment -c pyproject.toml -ll
+      - name: pip-audit (dependency vulnerabilities)
+        run: pip-audit -r requirements.txt --strict

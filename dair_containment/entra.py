@@ -61,7 +61,9 @@ class EntraClient(BaseApiClient):
             user = self.get(f"/users/{identifier}", params={"$select": USER_SELECT})
         except ApiError as exc:
             if exc.status_code == 404:
-                raise PrincipalNotFound(f"No Entra ID user matched '{identifier}'", status_code=404)
+                raise PrincipalNotFound(
+                    f"No Entra ID user matched '{identifier}'", status_code=404
+                ) from exc
             raise
 
         if user.get("userType") == "Guest":

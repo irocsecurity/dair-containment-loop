@@ -72,22 +72,29 @@ class DefenderClient(BaseApiClient):
         if not machines:
             raise MachineNotFound(f"No MDE device matched '{identifier}'", status_code=404)
 
-        exact = [m for m in machines if (m.get("computerDnsName") or "").split(".")[0].lower() == name]
+        exact = [
+            m for m in machines if (m.get("computerDnsName") or "").split(".")[0].lower() == name
+        ]
         candidates = exact or machines
 
         if len(candidates) > 1:
             LOG.warning(
                 "%d devices matched '%s' (ids: %s). Selecting most recently seen. "
                 "Confirm the correct device before relying on this in a live incident.",
-                len(candidates), identifier, ", ".join(m.get("id", "?") for m in candidates[:5]),
+                len(candidates),
+                identifier,
+                ", ".join(m.get("id", "?") for m in candidates[:5]),
             )
 
         candidates.sort(key=lambda m: m.get("lastSeen") or "", reverse=True)
         chosen = candidates[0]
         LOG.info(
             "Resolved '%s' -> machine %s (%s, health=%s, lastSeen=%s)",
-            identifier, chosen.get("id"), chosen.get("computerDnsName"),
-            chosen.get("healthStatus"), chosen.get("lastSeen"),
+            identifier,
+            chosen.get("id"),
+            chosen.get("computerDnsName"),
+            chosen.get("healthStatus"),
+            chosen.get("lastSeen"),
         )
         return chosen
 
@@ -101,7 +108,9 @@ class DefenderClient(BaseApiClient):
     ) -> Dict[str, Any]:
         """Isolate a device. Returns the machine action record."""
         if isolation_type not in ISOLATION_TYPES:
-            raise ValueError(f"isolation_type must be one of {ISOLATION_TYPES}, got {isolation_type!r}")
+            raise ValueError(
+                f"isolation_type must be one of {ISOLATION_TYPES}, got {isolation_type!r}"
+            )
 
         LOG.info("Isolating machine %s (type=%s)", machine_id, isolation_type)
         return self.post(

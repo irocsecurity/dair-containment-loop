@@ -1,0 +1,22 @@
+name: Dependency review
+
+# Blocks a pull request that introduces a dependency with a known vulnerability
+# or a license incompatible with Apache-2.0 redistribution.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          deny-licenses: GPL-3.0, AGPL-3.0, LGPL-3.0

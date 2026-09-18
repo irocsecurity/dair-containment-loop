@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 from .audit import AuditLog
 from .auth import AppCredentials, AuthError, TokenProvider
-from .defender import DefenderClient, ISOLATION_TYPES
+from .defender import ISOLATION_TYPES, DefenderClient
 from .entra import EntraClient
 from .loop import (
     ContainmentLoop,
@@ -58,7 +58,7 @@ def _load_guardrails(path: Optional[str]) -> Dict[str, List[str]]:
     if path:
         if not os.path.isfile(path):
             raise SystemExit(f"Config file not found: {path}")
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             loaded = json.load(handle)
         data["protected_users"] = list(loaded.get("protected_users", []))
         data["protected_devices"] = list(loaded.get("protected_devices", []))
@@ -90,7 +90,9 @@ def _common_options() -> argparse.ArgumentParser:
     """
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", help="Path to JSON config with protected principals.")
-    common.add_argument("--audit-log", default="./dair-audit.jsonl", help="Audit trail path (JSONL).")
+    common.add_argument(
+        "--audit-log", default="./dair-audit.jsonl", help="Audit trail path (JSONL)."
+    )
     common.add_argument("--execute", action="store_true", help="Actually perform actions.")
     common.add_argument("--yes", action="store_true", help="Skip the confirmation prompt.")
     common.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
@@ -107,34 +109,49 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dair-contain",
         description="Concurrent endpoint isolation (Defender for Endpoint) and "
-                    "identity containment (Entra ID), implementing the DAIR Containment Loop.",
+        "identity containment (Entra ID), implementing the DAIR Containment Loop.",
         epilog="Dry-run by default. Pass --execute to act.",
     )
     common = _common_options()
     sub = parser.add_subparsers(dest="command", required=True)
 
-    contain = sub.add_parser("contain", parents=[common],
-                             help="Isolate host and revoke identity, concurrently.")
+    contain = sub.add_parser(
+        "contain", parents=[common], help="Isolate host and revoke identity, concurrently."
+    )
     contain.add_argument("--host", help="Device hostname or MDE machine id.")
     contain.add_argument("--user", help="User principal name or Entra object id.")
-    contain.add_argument("--comment", default="DAIR containment loop - automated response",
-                         help="Comment recorded on the MDE machine action.")
-    contain.add_argument("--isolation-type", choices=ISOLATION_TYPES, default="full",
-                         help="'selective' preserves Outlook/Teams/Skype connectivity.")
-    contain.add_argument("--disable-account", action="store_true",
-                         help="Also set accountEnabled=false. Required for guest/B2B containment.")
+    contain.add_argument(
+        "--comment",
+        default="DAIR containment loop - automated response",
+        help="Comment recorded on the MDE machine action.",
+    )
+    contain.add_argument(
+        "--isolation-type",
+        choices=ISOLATION_TYPES,
+        default="full",
+        help="'selective' preserves Outlook/Teams/Skype connectivity.",
+    )
+    contain.add_argument(
+        "--disable-account",
+        action="store_true",
+        help="Also set accountEnabled=false. Required for guest/B2B containment.",
+    )
 
-    release = sub.add_parser("release", parents=[common],
-                             help="Reverse containment, concurrently.")
+    release = sub.add_parser("release", parents=[common], help="Reverse containment, concurrently.")
     release.add_argument("--host", help="Device hostname or MDE machine id.")
     release.add_argument("--user", help="User principal name or Entra object id.")
-    release.add_argument("--comment", default="DAIR containment loop - release",
-                         help="Comment recorded on the MDE machine action.")
-    release.add_argument("--enable-account", action="store_true",
-                         help="Also set accountEnabled=true.")
+    release.add_argument(
+        "--comment",
+        default="DAIR containment loop - release",
+        help="Comment recorded on the MDE machine action.",
+    )
+    release.add_argument(
+        "--enable-account", action="store_true", help="Also set accountEnabled=true."
+    )
 
-    sub.add_parser("preflight", parents=[common],
-                   help="Validate credentials and API reachability, then exit.")
+    sub.add_parser(
+        "preflight", parents=[common], help="Validate credentials and API reachability, then exit."
+    )
 
     return parser
 
@@ -177,7 +194,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:  # noqa: BLE001 - MSAL raises transport errors here
         LOG.error(
             "Could not initialise authentication against tenant %s: %s: %s",
-            os.environ.get("DAIR_TENANT_ID", "<unset>"), exc.__class__.__name__, exc,
+            os.environ.get("DAIR_TENANT_ID", "<unset>"),
+            exc.__class__.__name__,
+            exc,
         )
         LOG.error("Check network egress to login.microsoftonline.com and the tenant id.")
         return 2
@@ -233,13 +252,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     if args.json:
-        print(json.dumps({
-            "mode": result.mode,
-            "ok": result.ok,
-            "wall_clock_ms": result.wall_clock_ms,
-            "sequential_ms": result.serial_ms,
-            "actions": [vars(r) for r in result.results],
-        }, indent=2, default=str))
+        print(
+            json.dumps(
+                {
+                    "mode": result.mode,
+                    "ok": result.ok,
+                    "wall_clock_ms": result.wall_clock_ms,
+                    "sequential_ms": result.serial_ms,
+                    "actions": [vars(r) for r in result.results],
+                },
+                indent=2,
+                default=str,
+            )
+        )
     else:
         print("\n" + result.report() + "\n")
         if result.mode == "dry-run":

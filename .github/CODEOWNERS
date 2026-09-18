@@ -1,0 +1,25 @@
+# Code owners for dair-containment-loop.
+#
+# Owners must be a GitHub username or an @org/team. A bare organization name
+# (@irocsecurity) is NOT valid and fails silently.
+#
+# The owner must have WRITE access to this repository. If you later add other
+# maintainers, create @irocsecurity/maintainers, give that team write access,
+# and replace the entries below with it.
+#
+# Enforced only when "Require review from Code Owners" is enabled in the
+# main-protection ruleset. That setting is what makes an outside contributor's
+# pull request require approval from the organization before it can merge.
+
+*                            @irocsecurity-own
+
+# Paths where a mistake is most expensive. Listed explicitly so a change here
+# is visibly a code-owner change even if the catch-all above is ever relaxed.
+/.github/workflows/          @irocsecurity-own
+/.github/CODEOWNERS          @irocsecurity-own
+/dair_containment/loop.py    @irocsecurity-own
+/dair_containment/auth.py    @irocsecurity-own
+/LICENSE                     @irocsecurity-own
+/NOTICE                      @irocsecurity-own
+/TRADEMARK.md                @irocsecurity-own
+/SECURITY.md                 @irocsecurity-own

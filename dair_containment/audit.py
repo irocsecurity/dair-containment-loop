@@ -34,7 +34,9 @@ def _utc_now() -> str:
 class AuditLog:
     def __init__(self, path: str, run_id: Optional[str] = None) -> None:
         self.path = path
-        self.run_id = run_id or f"dair-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        self.run_id = (
+            run_id or f"dair-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        )
         self._lock = threading.Lock()
 
         directory = os.path.dirname(os.path.abspath(path))

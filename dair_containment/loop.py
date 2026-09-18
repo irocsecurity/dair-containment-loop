@@ -145,7 +145,9 @@ class ContainmentLoop:
         self._entra = entra
         self._audit = audit
         self._protected_users = [u.strip().lower() for u in (protected_users or []) if u.strip()]
-        self._protected_devices = [d.strip().lower() for d in (protected_devices or []) if d.strip()]
+        self._protected_devices = [
+            d.strip().lower() for d in (protected_devices or []) if d.strip()
+        ]
 
         if require_guardrail:
             self._assert_guardrail_configured()
@@ -188,7 +190,9 @@ class ContainmentLoop:
                 LOG.warning(
                     "Machine %s already has an isolation action (%s, status=%s). Proceeding anyway; "
                     "MDE will reconcile.",
-                    dns_name, existing.get("id"), existing.get("status"),
+                    dns_name,
+                    existing.get("id"),
+                    existing.get("status"),
                 )
 
             detail: Dict[str, Any] = {
@@ -229,9 +233,12 @@ class ContainmentLoop:
             )
 
         self._audit.record(
-            result.action, result.target, result.mode,
+            result.action,
+            result.target,
+            result.mode,
             "ok" if result.ok else "failed",
-            reversible=result.reversible, undo_hint=result.undo_hint,
+            reversible=result.reversible,
+            undo_hint=result.undo_hint,
             detail={**result.detail, **({"error": result.error} if result.error else {})},
         )
         return result
@@ -300,9 +307,12 @@ class ContainmentLoop:
             )
 
         self._audit.record(
-            result.action, result.target, result.mode,
+            result.action,
+            result.target,
+            result.mode,
             "ok" if result.ok else "failed",
-            reversible=result.reversible, undo_hint=result.undo_hint,
+            reversible=result.reversible,
+            undo_hint=result.undo_hint,
             detail={**result.detail, **({"error": result.error} if result.error else {})},
         )
         return result
@@ -324,7 +334,9 @@ class ContainmentLoop:
 
         tasks = []
         if host:
-            tasks.append(("host", lambda: self._isolate_host(host, comment, isolation_type, execute)))
+            tasks.append(
+                ("host", lambda: self._isolate_host(host, comment, isolation_type, execute))
+            )
         if user:
             tasks.append(("user", lambda: self._contain_identity(user, disable_account, execute)))
 
@@ -338,7 +350,9 @@ class ContainmentLoop:
 
         # Stable ordering for reporting: endpoint first, then identity.
         results.sort(key=lambda r: 0 if r.action.startswith("mde") else 1)
-        return LoopResult(results=results, wall_clock_ms=wall, mode="execute" if execute else "dry-run")
+        return LoopResult(
+            results=results, wall_clock_ms=wall, mode="execute" if execute else "dry-run"
+        )
 
     def release(
         self,
@@ -365,12 +379,25 @@ class ContainmentLoop:
                     action = self._mde.release(machine["id"], comment)
                     detail["machine_action_id"] = (action or {}).get("id")
                 elapsed = int((time.monotonic() - started) * 1000)
-                res = ActionResult("mde.release", machine.get("computerDnsName", host), True, mode, elapsed, detail=detail)
+                res = ActionResult(
+                    "mde.release",
+                    machine.get("computerDnsName", host),
+                    True,
+                    mode,
+                    elapsed,
+                    detail=detail,
+                )
             except (ApiError, MachineNotFound) as exc:
                 elapsed = int((time.monotonic() - started) * 1000)
                 res = ActionResult("mde.release", host or "?", False, mode, elapsed, error=str(exc))
-            self._audit.record(res.action, res.target, res.mode, "ok" if res.ok else "failed",
-                               reversible=True, detail={**res.detail, **({"error": res.error} if res.error else {})})
+            self._audit.record(
+                res.action,
+                res.target,
+                res.mode,
+                "ok" if res.ok else "failed",
+                reversible=True,
+                detail={**res.detail, **({"error": res.error} if res.error else {})},
+            )
             return res
 
         def release_user() -> ActionResult:
@@ -378,18 +405,36 @@ class ContainmentLoop:
             mode = "execute" if execute else "dry-run"
             try:
                 u = self._entra.resolve_user(user)  # type: ignore[arg-type]
-                detail = {"object_id": u["id"], "upn": u.get("userPrincipalName"),
-                          "account_enabled_before": u.get("accountEnabled")}
+                detail = {
+                    "object_id": u["id"],
+                    "upn": u.get("userPrincipalName"),
+                    "account_enabled_before": u.get("accountEnabled"),
+                }
                 if execute and enable_account:
                     self._entra.set_account_enabled(u["id"], True)
                     detail["enabled"] = True
                 elapsed = int((time.monotonic() - started) * 1000)
-                res = ActionResult("entra.enable", u.get("userPrincipalName", user), True, mode, elapsed, detail=detail)
+                res = ActionResult(
+                    "entra.enable",
+                    u.get("userPrincipalName", user),
+                    True,
+                    mode,
+                    elapsed,
+                    detail=detail,
+                )
             except (ApiError, PrincipalNotFound) as exc:
                 elapsed = int((time.monotonic() - started) * 1000)
-                res = ActionResult("entra.enable", user or "?", False, mode, elapsed, error=str(exc))
-            self._audit.record(res.action, res.target, res.mode, "ok" if res.ok else "failed",
-                               reversible=True, detail={**res.detail, **({"error": res.error} if res.error else {})})
+                res = ActionResult(
+                    "entra.enable", user or "?", False, mode, elapsed, error=str(exc)
+                )
+            self._audit.record(
+                res.action,
+                res.target,
+                res.mode,
+                "ok" if res.ok else "failed",
+                reversible=True,
+                detail={**res.detail, **({"error": res.error} if res.error else {})},
+            )
             return res
 
         tasks = []
@@ -406,4 +451,6 @@ class ContainmentLoop:
         wall = int((time.monotonic() - started) * 1000)
 
         results.sort(key=lambda r: 0 if r.action.startswith("mde") else 1)
-        return LoopResult(results=results, wall_clock_ms=wall, mode="execute" if execute else "dry-run")
+        return LoopResult(
+            results=results, wall_clock_ms=wall, mode="execute" if execute else "dry-run"
+        )

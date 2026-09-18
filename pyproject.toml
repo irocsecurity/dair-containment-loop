@@ -30,3 +30,29 @@ dair-contain = "dair_containment.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["dair_containment*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["dair_containment", "tests"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import order, B bugbear, UP pyupgrade,
+# S bandit-derived security rules, C4 comprehensions, SIM simplify.
+select = ["E", "W", "F", "I", "B", "UP", "S", "C4", "SIM"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "UP006",   # keep typing.Dict/List: this targets Python 3.9
+    "UP007",   # keep Optional[X]: same reason
+    "UP045",   # same rule, current code
+    "UP035",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert is the point of a test
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]

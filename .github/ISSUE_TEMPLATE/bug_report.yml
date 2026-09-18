@@ -1,0 +1,36 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste tenant identifiers, UPNs, machine names, or tokens.
+        Redact before submitting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Command run (redacted)
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Python version
+    validations: { required: true }
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed all tenant-identifying information
+          required: true

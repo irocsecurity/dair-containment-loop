@@ -1,0 +1,58 @@
+name: Release
+
+# Fires on a signed, annotated tag. Builds the distribution, attaches build
+# provenance attestations, and creates a GitHub release. Publishing to PyPI is
+# deliberately NOT wired up: that needs a trusted-publisher configuration and a
+# conscious decision, not a default.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Re-verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt ruff==0.15.11 'bandit[toml]==1.7.10'
+      - run: ruff check . && ruff format --check .
+      - run: bandit -r dair_containment -c pyproject.toml -ll
+      - run: python tests/test_loop.py
+
+  build:
+    name: Build and attest
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build distribution
+        run: |
+          pip install build==1.2.2
+          python -m build
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/*"
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: true          # a human opens the gate; releases are irreversible

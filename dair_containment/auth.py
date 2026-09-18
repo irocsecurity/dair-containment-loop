@@ -51,7 +51,7 @@ class AppCredentials:
     certificate_thumbprint: Optional[str] = None
 
     @classmethod
-    def from_env(cls) -> "AppCredentials":
+    def from_env(cls) -> AppCredentials:
         """Build credentials from environment. See .env.example."""
         tenant_id = os.environ.get("DAIR_TENANT_ID", "").strip()
         client_id = os.environ.get("DAIR_CLIENT_ID", "").strip()
@@ -93,7 +93,7 @@ class AppCredentials:
 
     def _msal_credential(self):
         if self.certificate_path and self.certificate_thumbprint:
-            with open(self.certificate_path, "r", encoding="utf-8") as handle:
+            with open(self.certificate_path, encoding="utf-8") as handle:
                 private_key = handle.read()
             return {"thumbprint": self.certificate_thumbprint, "private_key": private_key}
         return self.client_secret

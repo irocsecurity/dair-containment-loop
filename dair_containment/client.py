@@ -65,7 +65,9 @@ class BaseApiClient:
             except (TypeError, ValueError):
                 pass
         # Exponential with full jitter, capped.
-        return min((2 ** attempt) + random.random(), 30.0)
+        # noqa justification: this jitter spreads retries, it is not a security
+        # primitive. A CSPRNG here would cost entropy for no benefit.
+        return min((2**attempt) + random.random(), 30.0)  # noqa: S311  # nosec B311
 
     def _request(
         self,
@@ -92,7 +94,9 @@ class BaseApiClient:
             except requests.RequestException as exc:
                 last_error = f"transport error: {exc.__class__.__name__}"
                 if attempt == MAX_ATTEMPTS - 1:
-                    raise ApiError(f"{method} {url} failed after {MAX_ATTEMPTS} attempts: {last_error}")
+                    raise ApiError(
+                        f"{method} {url} failed after {MAX_ATTEMPTS} attempts: {last_error}"
+                    ) from exc
                 delay = self._backoff(attempt, None)
                 LOG.warning("%s %s -- %s; retrying in %.1fs", method, url, last_error, delay)
                 time.sleep(delay)
@@ -110,7 +114,12 @@ class BaseApiClient:
                 delay = self._backoff(attempt, response.headers.get("Retry-After"))
                 LOG.warning(
                     "%s %s -> HTTP %s; retrying in %.1fs (attempt %d/%d)",
-                    method, url, response.status_code, delay, attempt + 1, MAX_ATTEMPTS,
+                    method,
+                    url,
+                    response.status_code,
+                    delay,
+                    attempt + 1,
+                    MAX_ATTEMPTS,
                 )
                 time.sleep(delay)
                 continue

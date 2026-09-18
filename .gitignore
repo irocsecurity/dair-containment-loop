@@ -10,3 +10,17 @@ dair-audit.jsonl
 config/containment.json
 .pytest_cache/
 .DS_Store
+
+# Tooling caches and build output
+.ruff_cache/
+.mypy_cache/
+.bandit
+dist/
+build/
+*.egg-info/
+
+# Files Claude could not delete (no delete permission); remove manually
+_to_delete/
+
+# Local one-time setup script; not part of the published project
+SETUP-PUSH.sh
