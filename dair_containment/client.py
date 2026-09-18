@@ -43,7 +43,7 @@ class BaseApiClient:
         resource: str,
         base_url: str,
         timeout: int = DEFAULT_TIMEOUT,
-        user_agent: str = "dair-containment-loop/1.0 (+https://github.com/IROC-Security)",
+        user_agent: str = "dair-containment-loop/1.0 (+https://github.com/irocsecurity/dair-containment-loop)",
     ) -> None:
         self._tokens = token_provider
         self._resource = resource

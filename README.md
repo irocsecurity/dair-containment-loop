@@ -8,7 +8,7 @@
 
 An open reference implementation of the **Containment Loop** from the Dynamic Incident Response (DAIR) framework, targeting **Microsoft Defender for Endpoint** and **Microsoft Entra ID**.
 
-Maintained by [IROC Security](https://github.com/IROC-Security).
+Maintained by [IROC Security](https://github.com/irocsecurity).
 
 ---
 
@@ -52,7 +52,7 @@ Saved      : 586 ms of adversary dwell time
 ## Quickstart
 
 ```bash
-git clone https://github.com/IROC-Security/dair-containment-loop.git
+git clone https://github.com/irocsecurity/dair-containment-loop.git
 cd dair-containment-loop
 pip install -r requirements.txt
 

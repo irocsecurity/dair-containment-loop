@@ -20,6 +20,11 @@ classifiers = [
 ]
 dependencies = ["msal>=1.28.0,<2.0.0", "requests>=2.31.0,<3.0.0"]
 
+[project.urls]
+Homepage = "https://github.com/irocsecurity/dair-containment-loop"
+Source = "https://github.com/irocsecurity/dair-containment-loop"
+Issues = "https://github.com/irocsecurity/dair-containment-loop/issues"
+
 [project.scripts]
 dair-contain = "dair_containment.cli:main"
 
