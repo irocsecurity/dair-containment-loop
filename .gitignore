@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.pem
+*.pfx
+*.key
+dair-audit.jsonl
+config/containment.json
+.pytest_cache/
+.DS_Store

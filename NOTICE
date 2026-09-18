@@ -1,0 +1,21 @@
+DAIR Containment Loop
+Copyright 2026 IROC Security LLC
+
+This product includes software developed by IROC Security LLC.
+
+----------------------------------------------------------------------
+FRAMEWORK ATTRIBUTION
+
+The Dynamic Incident Response (DAIR) framework, including the Response
+Actions Loop model and the decision-velocity doctrine this tool implements,
+was created by Joshua Wright and is licensed under Creative Commons
+Attribution 4.0 International (CC BY 4.0).
+
+    Derived from Dynamic Incident Response by Joshua Wright,
+    used under CC BY 4.0.
+    https://creativecommons.org/licenses/by/4.0/
+
+Source code in this repository is licensed under Apache License 2.0
+(see LICENSE). Documentation and framework-derived prose in this
+repository are additionally available under CC BY 4.0.
+----------------------------------------------------------------------

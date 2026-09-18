@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to containment.json and replace ALL values. The tool refuses to run while template values remain.",
+  "protected_users": [
+    "bg-admin-01@CHANGE-ME.onmicrosoft.com",
+    "bg-admin-02@CHANGE-ME.onmicrosoft.com"
+  ],
+  "protected_devices": [
+    "CHANGE-ME-DC01",
+    "CHANGE-ME-DC02"
+  ]
+}
