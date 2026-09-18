@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Append-only JSONL audit trail.
 
 Under DAIR, reversible containment actions are executed without prior approval.

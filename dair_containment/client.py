@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared HTTP layer: retry, backoff, throttling, and redaction.
 
 Both API clients inherit from :class:`BaseApiClient`. Containment happens under

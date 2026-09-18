@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Token acquisition for the two APIs the containment loop touches.
 
 The DAIR Containment Loop acts against two independent Microsoft APIs that do

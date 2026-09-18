@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Offline tests for the containment loop. No network, no tenant required.
 
 Run with:  python -m pytest -q     (or)     python tests/test_loop.py

@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Microsoft Entra ID -- session revocation and account state.
 
 Required application permissions on the containment service principal:

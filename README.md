@@ -194,10 +194,18 @@ Links: `[ADD-SITE-LINKS]`
 
 Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Particularly interested in: additional EDR/IdP backends, SOAR integration patterns, and real-world latency measurements from live tenants.
 
+Contributions are accepted under the [Developer Certificate of Origin](DCO) 1.1 — sign off your commits with `git commit -s`. There is no CLA, nothing to sign, and no copyright assignment: you keep ownership of your work.
+
 ## Security
 
 Do not open a public issue for a vulnerability in this tool. See [SECURITY.md](SECURITY.md).
 
-## License
+## License and reuse
 
-Code: [Apache License 2.0](LICENSE). Documentation and framework-derived prose: additionally available under CC BY 4.0. See [NOTICE](NOTICE).
+**Code:** [Apache License 2.0](LICENSE). Use it, fork it, run it commercially, build a product on it. What the license asks in return is that you keep the copyright and license notices intact and state what you changed — attribution is a condition of use, not a courtesy.
+
+**Documentation and framework-derived prose:** additionally available under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See [NOTICE](NOTICE).
+
+**Names and marks:** *not* licensed. The Apache License grants rights to the code, not to "IROC Security" or to this project's name — see [TRADEMARK.md](TRADEMARK.md). Fork freely and ship what you build; give your version its own name so a practitioner can tell whose code is about to isolate their production hosts.
+
+> Derived from Dynamic Incident Response by Joshua Wright, used under CC BY 4.0.

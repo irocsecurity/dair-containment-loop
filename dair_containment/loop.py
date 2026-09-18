@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """The DAIR Containment Loop.
 
 Legacy incident response runs containment as a sequence: isolate the host, then

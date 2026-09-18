@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """DAIR Containment Loop -- concurrent endpoint and identity containment.
 
 Open-source reference implementation of the DAIR Containment Loop, published by

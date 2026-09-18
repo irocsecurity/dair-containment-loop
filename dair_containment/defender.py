@@ -1,3 +1,6 @@
+# Copyright 2026 IROC Security LLC
+# SPDX-License-Identifier: Apache-2.0
+
 """Microsoft Defender for Endpoint -- device isolation and release.
 
 Required application permissions on the containment service principal:
