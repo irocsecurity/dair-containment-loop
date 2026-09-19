@@ -18,7 +18,7 @@ This document states how those marks may and may not be used.
 The following are trademarks of IROC Security LLC, whether registered or
 claimed under common law:
 
-- **IROC Security** and **IROC**
+- **IROC Security**
 - The IROC Security logo and wordmark
 - **DAIR Containment Loop** as the name of this project
 
@@ -58,9 +58,9 @@ Including in product names, domain names, app-store listings, package names,
 company names, social handles, conference booths, or marketing material.
 
 **Anything that implies endorsement, affiliation, certification, or
-partnership** where none exists. "IROC-certified," "official IROC
-implementation," "IROC partner," and "powered by IROC Security" all require
-written permission.
+partnership** where none exists. "IROC Security certified," "official IROC
+Security implementation," "IROC Security partner," and "powered by IROC
+Security" all require written permission.
 
 **Merchandise** bearing the marks.
 
