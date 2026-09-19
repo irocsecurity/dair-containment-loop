@@ -177,16 +177,12 @@ python tests/test_loop.py          # or: python -m pytest -q
 
 ## More from IROC Security
 
-This tool is the free, open piece of a larger body of work on applying DAIR to cloud environments.
+This repository is part of IROC Security's ongoing work applying Dynamic Incident
+Response concepts to cloud identity and modern security operations. Additional
+runbooks, tabletop exercises, implementation guidance, and research will be
+released as the library develops.
 
-| | |
-|---|---|
-| **Free — this repo** | The containment loop tool, Apache-2.0. Use it, fork it, ship it. |
-| **Free download** | *Cloud Identity Compromise: Containment Quick Reference* — the token mechanics above as a one-page field card. |
-| **Newsletter** | The full **Entra ID Account Compromise Runbook** — scoping query pack, persistence artifact inventory, eradication verification gates, and exposure-determination workflow. |
-| **Paid** | Full DAIR runbook library, facilitated tabletop exercises, and authority-matrix implementation for pre-delegated containment. |
-
-Links: `[ADD-SITE-LINKS]`
+Follow [IROC Security](https://irocsecurity.com) for future releases.
 
 ---
 
