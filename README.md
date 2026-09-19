@@ -5,6 +5,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docs: CC BY 4.0](https://img.shields.io/badge/docs-CC%20BY%204.0-lightgrey.svg)](NOTICE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/irocsecurity/dair-containment-loop/badge)](https://scorecard.dev/viewer/?uri=github.com/irocsecurity/dair-containment-loop)
 
 An open reference implementation of the **Containment Loop** from the Dynamic Incident Response (DAIR) framework, targeting **Microsoft Defender for Endpoint** and **Microsoft Entra ID**.
 
