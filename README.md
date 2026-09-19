@@ -36,7 +36,9 @@ DAIR models containment as a loop that runs **concurrently with scoping and with
                          audit + report
 ```
 
-Typical measured difference against a live tenant: **containment completes in roughly the time of the slower half, not the sum of both.** The tool reports both numbers on every run so you can see it.
+Because both halves run concurrently, **containment completes in roughly the time of the slower half rather than the sum of both.** The tool reports both numbers on every run so you can measure it in your own environment.
+
+The concurrency property is covered by `tests/test_loop.py::TestConcurrency`, which fails if the loop ever silently becomes sequential. Real-world timings depend on Graph and MDE latency and throttling, and **no measurements against a production tenant have been published** — the figures below are illustrative output, not results.
 
 ```
 [OK] mde.isolate -> WS-4417 (842 ms)
@@ -172,6 +174,26 @@ python tests/test_loop.py          # or: python -m pytest -q
 **In scope:** concurrent MDE device isolation and Entra ID session revocation, with guardrails, audit, and a working undo.
 
 **Not in scope:** scoping queries, OAuth grant revocation, mailbox rule eradication, forensic collection, recovery workflows. Those are separate loops. This tool does one thing so it can be reviewed in an afternoon and trusted in an incident.
+
+---
+
+## How this differs from what already exists
+
+Most of what this tool does can be done other ways. It is worth knowing which one you actually want.
+
+**[Automatic attack disruption](https://learn.microsoft.com/en-us/defender-xdr/automatic-attack-disruption)** in Microsoft Defender XDR contains devices and disables accounts natively, with no tooling at all. It acts on Microsoft's detections, on Microsoft's timing, and is gated behind Defender XDR licensing. Where it covers your scenario and you are licensed for it, use it — it reacts faster than any human can.
+
+**SOAR playbooks and Logic Apps** — Sentinel, XSOAR, Splunk SOAR, and the various public MDE isolation playbooks — make the same API calls. They need a platform, a subscription, or a Function App to run inside, and their steps execute in sequence.
+
+**This tool** is for the case those two leave open: a responder who has decided to contain, on their own judgment, right now — with no SOAR platform, no cloud infrastructure, and nothing to review but a single Python package.
+
+What it adds on top of the two API calls:
+
+- Both halves run concurrently, and a test fails if that ever silently regresses
+- Dry run is the default; `--execute` has to be asked for
+- Guardrails fail closed — an empty or template-valued protected list refuses to run rather than proceeding unprotected
+- Every action writes an audit record, and every containment action has a working undo
+- Guest and B2B principals are disabled *before* revocation, because revoking sessions alone does not contain a credential that lives in another tenant
 
 ---
 
