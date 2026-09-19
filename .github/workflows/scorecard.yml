@@ -15,6 +15,9 @@ permissions: read-all
 jobs:
   analysis:
     runs-on: ubuntu-latest
+    # Scorecard publishes results and uploads SARIF, both of which need a
+    # public repository. Skip while private.
+    if: github.event.repository.visibility == 'public'
     permissions:
       security-events: write
       id-token: write
@@ -24,7 +27,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: ossf/scorecard-action@v2
+      # scorecard-action publishes no floating major tag (@v2 does not exist);
+      # it must be pinned to an exact release. Dependabot keeps this current.
+      - uses: ossf/scorecard-action@v2.4.4
         with:
           results_file: results.sarif
           results_format: sarif
