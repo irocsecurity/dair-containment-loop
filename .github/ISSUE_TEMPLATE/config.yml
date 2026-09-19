@@ -3,3 +3,9 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/irocsecurity/dair-containment-loop/security/advisories/new
     about: Report privately. Do not open a public issue for a vulnerability.
+  - name: Question or usage help
+    url: https://github.com/irocsecurity/dair-containment-loop/discussions
+    about: Ask here rather than opening an issue — questions get answered faster.
+  - name: Trademark or licensing question
+    url: mailto:contactus@irocsecurity.com
+    about: Naming, branding, and permission requests. See TRADEMARK.md.

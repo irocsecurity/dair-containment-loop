@@ -5,32 +5,97 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not paste tenant identifiers, UPNs, machine names, or tokens.
-        Redact before submitting.
+        **Before you type anything:** do not paste tenant identifiers, UPNs, machine
+        names, object IDs, correlation IDs, or tokens. Redact them. A public issue is
+        world-readable and permanently indexed.
+
+        Found a vulnerability? Do not open an issue — use the private advisory link on
+        the previous page.
+
   - type: textarea
     id: what
     attributes:
       label: What happened
     validations: { required: true }
+
   - type: textarea
     id: expected
     attributes:
       label: What you expected
     validations: { required: true }
+
+  - type: dropdown
+    id: half
+    attributes:
+      label: Which half of the loop failed
+      description: The loop runs Defender isolation and Entra revocation concurrently.
+      options:
+        - Defender (host isolation)
+        - Entra ID (token revocation)
+        - Both halves
+        - Neither — failed before either action ran
+        - Not applicable
+    validations: { required: true }
+
+  - type: dropdown
+    id: exit_code
+    attributes:
+      label: Exit code
+      description: Printed by `echo $?` immediately after the run.
+      options:
+        - "0 — success"
+        - "1 — an action failed"
+        - "2 — auth or credential problem"
+        - "3 — guardrail refusal"
+        - "64 — bad invocation"
+        - "130 — operator aborted"
+        - Unknown / not captured
+    validations: { required: true }
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Dry run (default)
+        - Execute
+    validations: { required: true }
+
+  - type: input
+    id: tool_version
+    attributes:
+      label: dair-containment-loop version
+      description: "`pip show dair-containment-loop`, or the release tag / commit SHA you ran."
+      placeholder: "1.0.0"
+    validations: { required: true }
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      description: "`python --version` (3.9 is the supported floor)."
+      placeholder: "3.11.9"
+    validations: { required: true }
+
   - type: textarea
     id: repro
     attributes:
       label: Command run (redacted)
       render: shell
-  - type: input
-    id: version
+
+  - type: textarea
+    id: audit
     attributes:
-      label: Python version
-    validations: { required: true }
+      label: Audit record (redacted)
+      description: >
+        The relevant line from your audit JSONL. Replace every identifier with a
+        placeholder — keep the structure, timings and error fields, drop the names.
+      render: json
+
   - type: checkboxes
     id: safety
     attributes:
       label: Confirmation
       options:
-        - label: I have removed all tenant-identifying information
+        - label: I have removed all tenant-identifying information from this report
           required: true
