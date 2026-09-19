@@ -47,7 +47,7 @@ jobs:
           pip install build==1.2.2
           python -m build
       - name: Generate build provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
       - name: Create GitHub release
