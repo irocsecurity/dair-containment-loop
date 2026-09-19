@@ -12,16 +12,11 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    # Dependency review needs the dependency graph, which on a private
-    # repository requires GitHub Advanced Security. Skip while private rather
-    # than failing every pull request; this turns itself on when the
-    # repository becomes public, matching codeql.yml.
-    if: github.event.repository.visibility == 'public'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
           deny-licenses: GPL-3.0, AGPL-3.0, LGPL-3.0
