@@ -57,6 +57,14 @@ pip install -r requirements.txt
 python tests/test_loop.py
 ```
 
+`ruff check .` and `ruff format --check .` must pass. Python 3.9 is the
+supported floor, so `Optional[X]` and `typing.Dict` are deliberate rather than
+stale — `UP006`, `UP007` and `UP045` are ignored for that reason. Please do not
+"modernize" them.
+
+Every source file carries a copyright line and an
+`SPDX-License-Identifier: Apache-2.0` header. New files need both.
+
 ## Pull requests
 
 - One logical change per PR.
@@ -67,6 +75,23 @@ python tests/test_loop.py
 - Run the test suite and paste the output.
 - If you are changing behavior during an incident, say in the PR what a
   responder would see differently at 2 a.m.
+
+## Changing a workflow
+
+Three things about CI that are deliberate and will be defended in review:
+
+1. **CI triggers on `pull_request`, never `pull_request_target`.**
+   `pull_request_target` runs with repository secrets in scope against code from
+   a fork — the mechanism behind real build-pipeline compromises. If the goal is
+   to review fork pull requests, the answer is not this trigger.
+2. **Third-party Actions are kept to a minimum.** `ci.yml` uses only
+   `actions/checkout` and `actions/setup-python`; scanners install from PyPI.
+   Every additional Action is another repository with access to the workflow.
+   Prefer `gh`, which is preinstalled on runners, over wrapping a third-party
+   action.
+3. **`release.yml` is never exercised by CI.** It fires only on a `v*.*.*` tag,
+   so a green check on a pull request touching it proves nothing. Validate
+   changes to it with a throwaway tag.
 
 ## Good first contributions
 

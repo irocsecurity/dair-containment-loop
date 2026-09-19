@@ -24,3 +24,7 @@ _to_delete/
 
 # Local one-time setup script; not part of the published project
 SETUP-PUSH.sh
+
+# Local agent instruction files; not part of the published project
+AGENTS.md
+CLAUDE.md
