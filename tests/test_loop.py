@@ -546,6 +546,30 @@ class TestDeviceResolution(unittest.TestCase):
         self.assertIn(f"Resolved '{machine_id}' -> machine {machine_id} (lab-dair1", logs.output[0])
 
 
+class TestConfirmation(unittest.TestCase):
+    """Lab finding #12: accept the word in any case, never a single keypress."""
+
+    def _answer(self, typed):
+        with mock.patch("builtins.input", return_value=typed):
+            return cli._confirm("CONTAIN x")
+
+    def test_the_word_yes_in_any_case_confirms(self):
+        for typed in ("YES", "Yes", "yes", "yEs", "  yes  "):
+            with self.subTest(typed=typed):
+                self.assertIsNone(self._answer(typed))
+
+    def test_anything_else_is_refused_with_a_reason(self):
+        for typed in ("y", "Y", "ye", "yes please", "no", ""):
+            with self.subTest(typed=typed):
+                reason = self._answer(typed)
+                self.assertIsNotNone(reason, f"{typed!r} must not confirm")
+                self.assertIn("must be the word YES", reason)
+
+    def test_interrupted_prompt_is_refused(self):
+        with mock.patch("builtins.input", side_effect=EOFError):
+            self.assertIn("no confirmation", cli._confirm("CONTAIN x"))
+
+
 class TestCliExitCodes(unittest.TestCase):
     """Lab finding #3 and the CLI half of #6. Each exit code must mean one thing."""
 

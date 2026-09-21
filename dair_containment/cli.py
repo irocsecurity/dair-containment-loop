@@ -106,12 +106,20 @@ def _load_guardrails(path: Optional[str]) -> Dict[str, List[str]]:
     return data
 
 
-def _confirm(prompt: str) -> bool:
+def _confirm(prompt: str) -> Optional[str]:
+    """Ask the operator to type the word YES. Return None if confirmed, else why not.
+
+    The deliberateness comes from typing the whole word, so any capitalisation
+    is accepted. A bare "y" is not: a single keypress is what fingers do on
+    autopilot, and that reflex is exactly what this prompt exists to interrupt.
+    """
     try:
         answer = input(f"{prompt} [type YES to proceed]: ").strip()
     except (EOFError, KeyboardInterrupt):
-        return False
-    return answer == "YES"
+        return "no confirmation was received"
+    if answer.lower() == "yes":
+        return None
+    return f"confirmation must be the word YES (received {answer[:20]!r})"
 
 
 def _common_options() -> argparse.ArgumentParser:
@@ -275,8 +283,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.execute and not args.yes:
         targets = ", ".join(filter(None, [args.host, args.user]))
         verb = "CONTAIN" if args.command == "contain" else "RELEASE"
-        if not _confirm(f"\n{verb} {targets} -- this will take effect immediately."):
-            LOG.warning("Aborted by operator.")
+        refusal = _confirm(f"\n{verb} {targets} -- this will take effect immediately.")
+        if refusal:
+            # Say why, so an operator never mistakes a mistyped confirmation
+            # for some other failure. Nothing has been changed at this point.
+            LOG.warning("Aborted: %s. Nothing was changed.", refusal)
             return EXIT_ABORTED
 
     try:
