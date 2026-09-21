@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict
+from urllib.parse import quote
 
 from .auth import GRAPH_RESOURCE, TokenProvider
 from .client import ApiError, BaseApiClient
@@ -58,7 +59,12 @@ class EntraClient(BaseApiClient):
     def resolve_user(self, identifier: str) -> Dict[str, Any]:
         """Resolve a UPN or object id to a user record, with containment caveats logged."""
         try:
-            user = self.get(f"/users/{identifier}", params={"$select": USER_SELECT})
+            # Percent-encode the identifier. A guest UPN contains '#' ("x_gmail.com#EXT#@..."),
+            # which unencoded starts a URL fragment: the request silently becomes
+            # /users/x_gmail.com and 404s. Encoding '/' also keeps an identifier from
+            # reaching any other Graph path.
+            path = "/users/" + quote(identifier.strip(), safe="@")
+            user = self.get(path, params={"$select": USER_SELECT})
         except ApiError as exc:
             if exc.status_code == 404:
                 raise PrincipalNotFound(
@@ -66,14 +72,22 @@ class EntraClient(BaseApiClient):
                 ) from exc
             raise
 
-        if user.get("userType") == "Guest":
-            LOG.warning(
-                "%s is a GUEST (B2B) principal. Session revocation alone is NOT containment: "
-                "the credential and session live in the home tenant, and the guest will "
-                "re-authenticate via SSO within seconds. Disable the guest object "
-                "(--disable-account) and notify the home tenant.",
-                user.get("userPrincipalName"),
-            )
+        # Mirrors the device-side resolution line. A dry run is the last point
+        # at which an operator can notice they are about to act on the wrong
+        # principal, so what the identifier resolved to must be visible.
+        LOG.info(
+            "Resolved '%s' -> user %s (%s, type=%s, enabled=%s, hybrid=%s)",
+            identifier,
+            user.get("id"),
+            user.get("userPrincipalName"),
+            user.get("userType"),
+            user.get("accountEnabled"),
+            bool(user.get("onPremisesSyncEnabled")),
+        )
+
+        # Guest-specific advice depends on what the operator is doing, so it is
+        # given by the containment loop, not here -- resolution also serves
+        # release and status, where "disable the guest" would be wrong.
 
         if user.get("onPremisesSyncEnabled"):
             LOG.warning(

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dair-containment-loop"
-version = "1.0.0"
+version = "0.1.0"
 description = "Concurrent endpoint isolation and identity containment, implementing the DAIR Containment Loop."
 readme = "README.md"
 requires-python = ">=3.9"
