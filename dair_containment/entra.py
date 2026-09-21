@@ -66,6 +66,19 @@ class EntraClient(BaseApiClient):
                 ) from exc
             raise
 
+        # Mirrors the device-side resolution line. A dry run is the last point
+        # at which an operator can notice they are about to act on the wrong
+        # principal, so what the identifier resolved to must be visible.
+        LOG.info(
+            "Resolved '%s' -> user %s (%s, type=%s, enabled=%s, hybrid=%s)",
+            identifier,
+            user.get("id"),
+            user.get("userPrincipalName"),
+            user.get("userType"),
+            user.get("accountEnabled"),
+            bool(user.get("onPremisesSyncEnabled")),
+        )
+
         if user.get("userType") == "Guest":
             LOG.warning(
                 "%s is a GUEST (B2B) principal. Session revocation alone is NOT containment: "

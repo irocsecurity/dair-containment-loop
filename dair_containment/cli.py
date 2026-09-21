@@ -28,10 +28,25 @@ from .loop import (
     ContainmentLoop,
     GuardrailNotConfigured,
     ProtectedPrincipalError,
+    check_targets,
     validate_guardrails,
 )
 
 LOG = logging.getLogger("dair_containment")
+
+# Exit codes. Wrappers -- SOAR playbooks, scripts run at 2 a.m. -- branch on
+# these, so each must mean exactly one thing.
+EXIT_OK = 0
+EXIT_ACTION_FAILED = 1
+EXIT_AUTH = 2
+EXIT_GUARDRAIL = 3
+EXIT_USAGE = 64
+EXIT_ABORTED = 130
+
+
+class ConfigError(ValueError):
+    """The guardrail config is missing or malformed. A usage error, not a failed action."""
+
 
 BANNER = r"""
   DAIR CONTAINMENT LOOP
@@ -51,17 +66,35 @@ def _configure_logging(verbose: bool) -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
+def _string_list(loaded: Dict, key: str, path: str) -> List[str]:
+    """Read a list of strings, refusing anything else.
+
+    A bare string must not be accepted: ``list("me@x.com")`` is a list of single
+    characters, which would make the guardrail look populated while protecting
+    nothing.
+    """
+    value = loaded.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(f"'{key}' in {path} must be a JSON list of strings.")
+    return list(value)
+
+
 def _load_guardrails(path: Optional[str]) -> Dict[str, List[str]]:
     """Load protected principals from JSON config, then environment overlay."""
     data: Dict[str, List[str]] = {"protected_users": [], "protected_devices": []}
 
     if path:
         if not os.path.isfile(path):
-            raise SystemExit(f"Config file not found: {path}")
-        with open(path, encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        data["protected_users"] = list(loaded.get("protected_users", []))
-        data["protected_devices"] = list(loaded.get("protected_devices", []))
+            raise ConfigError(f"Config file not found: {path}")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"Config file is not valid JSON: {path} ({exc})") from exc
+        if not isinstance(loaded, dict):
+            raise ConfigError(f"Config file must contain a JSON object: {path}")
+        data["protected_users"] = _string_list(loaded, "protected_users", path)
+        data["protected_devices"] = _string_list(loaded, "protected_devices", path)
 
     env_users = os.environ.get("DAIR_PROTECTED_USERS", "")
     env_devices = os.environ.get("DAIR_PROTECTED_DEVICES", "")
@@ -170,15 +203,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command != "preflight":
         if not args.host and not args.user:
             LOG.error("Specify --host, --user, or both.")
-            return 64
+            return EXIT_USAGE
 
-        guardrails = _load_guardrails(args.config)
+        try:
+            guardrails = _load_guardrails(args.config)
+        except ConfigError as exc:
+            LOG.error("CONFIG: %s", exc)
+            return EXIT_USAGE
+
         if not args.no_guardrail:
             try:
                 validate_guardrails(guardrails["protected_users"], guardrails["protected_devices"])
+                if args.command == "contain":
+                    # Refuse protected targets from what was typed, before any
+                    # API -- or even the token endpoint -- is contacted.
+                    check_targets(
+                        args.host,
+                        args.user,
+                        guardrails["protected_users"],
+                        guardrails["protected_devices"],
+                    )
             except GuardrailNotConfigured as exc:
                 LOG.error("GUARDRAIL: %s", exc)
-                return 3
+                return EXIT_GUARDRAIL
+            except ProtectedPrincipalError as exc:
+                LOG.error("GUARDRAIL: %s", exc)
+                return EXIT_GUARDRAIL
         else:
             LOG.warning(
                 "Protected-principal guardrail DISABLED via --no-guardrail. "
@@ -190,7 +240,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         tokens = TokenProvider(credentials)
     except AuthError as exc:
         LOG.error("%s", exc)
-        return 2
+        return EXIT_AUTH
     except Exception as exc:  # noqa: BLE001 - MSAL raises transport errors here
         LOG.error(
             "Could not initialise authentication against tenant %s: %s: %s",
@@ -199,16 +249,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             exc,
         )
         LOG.error("Check network egress to login.microsoftonline.com and the tenant id.")
-        return 2
+        return EXIT_AUTH
 
     if args.command == "preflight":
         try:
             tokens.preflight()
         except AuthError as exc:
             LOG.error("Preflight FAILED: %s", exc)
-            return 2
-        LOG.info("Preflight OK. Both Graph and Defender for Endpoint are reachable.")
-        return 0
+            return EXIT_AUTH
+        LOG.info(
+            "Preflight OK. Tokens issued for Graph and Defender for Endpoint, "
+            "each carrying the application roles containment requires."
+        )
+        return EXIT_OK
 
     loop = ContainmentLoop(
         defender=DefenderClient(tokens),
@@ -224,7 +277,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         verb = "CONTAIN" if args.command == "contain" else "RELEASE"
         if not _confirm(f"\n{verb} {targets} -- this will take effect immediately."):
             LOG.warning("Aborted by operator.")
-            return 130
+            return EXIT_ABORTED
 
     try:
         if args.command == "contain":
@@ -245,11 +298,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 execute=args.execute,
             )
     except ProtectedPrincipalError as exc:
-        LOG.error("%s", exc)
-        return 3
+        # Raised when a target was refused after resolution -- an object id or
+        # machine id that turned out to be protected. Nothing was changed.
+        LOG.error("GUARDRAIL: %s", exc)
+        return EXIT_GUARDRAIL
     except Exception as exc:  # noqa: BLE001 - surface anything unexpected clearly
         LOG.exception("Containment loop failed: %s", exc)
-        return 1
+        return EXIT_ACTION_FAILED
 
     if args.json:
         print(
@@ -268,9 +323,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         print("\n" + result.report() + "\n")
         if result.mode == "dry-run":
-            print("DRY RUN -- nothing was changed. Re-run with --execute to act.\n")
+            if result.ok:
+                print("DRY RUN -- nothing was changed. Re-run with --execute to act.\n")
+            else:
+                # Never invite --execute over a failure: containment only acts
+                # when every target resolves, so it would change nothing anyway.
+                print(
+                    "DRY RUN -- nothing was changed. Resolve the failure above before "
+                    "using --execute; as things stand it would not act on anything.\n"
+                )
 
-    return 0 if result.ok else 1
+    return EXIT_OK if result.ok else EXIT_ACTION_FAILED
 
 
 if __name__ == "__main__":  # pragma: no cover
