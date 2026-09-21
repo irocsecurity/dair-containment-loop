@@ -480,6 +480,31 @@ class TestResolutionVisibility(unittest.TestCase):
         self.assertIn("Resolved 'alice@example.org' -> user " + OBJECT_ID, line)
         self.assertIn("type=Member", line)
 
+    def test_guest_upn_is_url_encoded(self):
+        """Lab finding #21: '#' in a guest UPN truncated the request URL."""
+        seen = []
+        client = EntraClient.__new__(EntraClient)
+
+        def get(path, params=None):
+            seen.append(path)
+            return {"id": OBJECT_ID, "userPrincipalName": "x", "userType": "Guest"}
+
+        client.get = get  # type: ignore[method-assign]
+        client.resolve_user("bob_gmail.com#EXT#@contoso.onmicrosoft.com")
+        self.assertEqual(seen, ["/users/bob_gmail.com%23EXT%23@contoso.onmicrosoft.com"])
+
+    def test_identifier_cannot_reach_other_paths(self):
+        seen = []
+        client = EntraClient.__new__(EntraClient)
+
+        def get(path, params=None):
+            seen.append(path)
+            return {"id": OBJECT_ID, "userPrincipalName": "x", "userType": "Member"}
+
+        client.get = get  # type: ignore[method-assign]
+        client.resolve_user("../groups?x")
+        self.assertEqual(seen, ["/users/..%2Fgroups%3Fx"])
+
 
 def _defender(inventory):
     """A DefenderClient whose HTTP layer serves a fixed device inventory.

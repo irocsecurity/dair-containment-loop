@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict
+from urllib.parse import quote
 
 from .auth import GRAPH_RESOURCE, TokenProvider
 from .client import ApiError, BaseApiClient
@@ -58,7 +59,12 @@ class EntraClient(BaseApiClient):
     def resolve_user(self, identifier: str) -> Dict[str, Any]:
         """Resolve a UPN or object id to a user record, with containment caveats logged."""
         try:
-            user = self.get(f"/users/{identifier}", params={"$select": USER_SELECT})
+            # Percent-encode the identifier. A guest UPN contains '#' ("x_gmail.com#EXT#@..."),
+            # which unencoded starts a URL fragment: the request silently becomes
+            # /users/x_gmail.com and 404s. Encoding '/' also keeps an identifier from
+            # reaching any other Graph path.
+            path = "/users/" + quote(identifier.strip(), safe="@")
+            user = self.get(path, params={"$select": USER_SELECT})
         except ApiError as exc:
             if exc.status_code == 404:
                 raise PrincipalNotFound(
