@@ -32,7 +32,7 @@ from dair_containment.auth import (  # noqa: E402
     token_roles,
 )
 from dair_containment.client import ApiError  # noqa: E402
-from dair_containment.defender import MachineNotFound  # noqa: E402
+from dair_containment.defender import DefenderClient, MachineNotFound  # noqa: E402
 from dair_containment.entra import EntraClient  # noqa: E402
 from dair_containment.loop import (  # noqa: E402
     ActionResult,
@@ -473,6 +473,77 @@ class TestResolutionVisibility(unittest.TestCase):
         line = "\n".join(logs.output)
         self.assertIn("Resolved 'alice@example.org' -> user " + OBJECT_ID, line)
         self.assertIn("type=Member", line)
+
+
+def _defender(inventory):
+    """A DefenderClient whose HTTP layer serves a fixed device inventory.
+
+    Mirrors MDE's behaviour: /machines/{id} returns one device or 404, and the
+    startswith() filter returns every device whose name begins with the prefix.
+    """
+    client = DefenderClient.__new__(DefenderClient)
+    client.calls = []
+
+    def get(path, params=None):
+        client.calls.append((path, params))
+        if path.startswith("/machines/"):
+            wanted = path.rsplit("/", 1)[1]
+            for m in inventory:
+                if m["id"] == wanted:
+                    return m
+            raise ApiError("not found", status_code=404)
+        prefix = params["$filter"].split("'")[1]
+        return {"value": [m for m in inventory if m["computerDnsName"].startswith(prefix)]}
+
+    client.get = get
+    return client
+
+
+def _device(name, machine_id="b" * 40, last_seen="2026-09-21T00:00:00Z"):
+    return {
+        "id": machine_id,
+        "computerDnsName": name,
+        "healthStatus": "Active",
+        "lastSeen": last_seen,
+    }
+
+
+class TestDeviceResolution(unittest.TestCase):
+    """Lab findings #10 and #11: exact matching, safe input, visible resolution."""
+
+    def test_prefix_is_never_accepted_as_a_match(self):
+        """The core regression. 'WS-12' previously resolved to ws-1234."""
+        mde = _defender([_device("ws-1234")])
+        with self.assertRaises(MachineNotFound) as ctx:
+            mde.resolve_machine("WS-12")
+        self.assertIn("ws-1234", str(ctx.exception), "near misses should be listed, not chosen")
+
+    def test_exact_short_name_matches_an_fqdn_record(self):
+        mde = _defender([_device("lab-dair1.corp.local")])
+        self.assertEqual(
+            mde.resolve_machine("LAB-DAIR1")["computerDnsName"], "lab-dair1.corp.local"
+        )
+
+    def test_fqdn_input_selects_that_exact_device(self):
+        """Two domains, same short name: an FQDN must not be overridden by recency."""
+        older = _device("dc01.corp.a", machine_id="a" * 40, last_seen="2026-01-01T00:00:00Z")
+        newer = _device("dc01.corp.b", machine_id="c" * 40, last_seen="2026-09-01T00:00:00Z")
+        mde = _defender([older, newer])
+        self.assertEqual(mde.resolve_machine("dc01.corp.a")["id"], "a" * 40)
+
+    def test_filter_breaking_characters_are_rejected_before_any_query(self):
+        mde = _defender([_device("ws-1234")])
+        injected = "x') or startswith(computerDnsName,'"
+        with self.assertRaises(MachineNotFound):
+            mde.resolve_machine(injected)
+        self.assertEqual(mde.calls, [], "a malformed name must not reach the API")
+
+    def test_machine_id_resolution_is_logged(self):
+        machine_id = "d" * 40
+        mde = _defender([_device("lab-dair1", machine_id=machine_id)])
+        with self.assertLogs("dair_containment.defender", level="INFO") as logs:
+            mde.resolve_machine(machine_id)
+        self.assertIn(f"Resolved '{machine_id}' -> machine {machine_id} (lab-dair1", logs.output[0])
 
 
 class TestCliExitCodes(unittest.TestCase):
