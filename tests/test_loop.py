@@ -12,6 +12,7 @@ import base64
 import contextlib
 import io
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -87,13 +88,18 @@ class FakeDefender:
 class FakeEntra:
     """Stands in for EntraClient with a deliberate 200 ms latency."""
 
-    def __init__(self, user_type="Member", upn=None, fail_with=None):
+    def __init__(
+        self, user_type="Member", upn=None, fail_with=None, enabled=True, patch_fails=None
+    ):
         self.revoked = []
         self.enabled_changes = []
         self.lookups = []
+        self.calls = []
         self._user_type = user_type
         self._upn = upn
         self._fail_with = fail_with
+        self._enabled = enabled
+        self._patch_fails = patch_fails
 
     def resolve_user(self, identifier):
         self.lookups.append(identifier)
@@ -103,17 +109,21 @@ class FakeEntra:
         return {
             "id": "11111111-2222-3333-4444-555555555555",
             "userPrincipalName": self._upn or identifier,
-            "accountEnabled": True,
+            "accountEnabled": self._enabled,
             "userType": self._user_type,
             "onPremisesSyncEnabled": False,
             "signInSessionsValidFromDateTime": "2026-09-01T00:00:00Z",
         }
 
     def revoke_sessions(self, user_id):
+        self.calls.append("revoke")
         self.revoked.append(user_id)
         return True
 
     def set_account_enabled(self, user_id, enabled):
+        self.calls.append("enable" if enabled else "disable")
+        if self._patch_fails:
+            raise self._patch_fails
         self.enabled_changes.append((user_id, enabled))
 
     def sessions_valid_from(self, user_id):
@@ -448,7 +458,7 @@ class TestAuth(unittest.TestCase):
         """A token with no roles is exactly what an un-consented app receives."""
         with self.assertRaises(AuthError) as ctx:
             self._provider([], []).preflight()
-        self.assertIn("User.ReadWrite.All", str(ctx.exception))
+        self.assertIn("User.RevokeSessions.All", str(ctx.exception))
         self.assertIn("Machine.Isolate", str(ctx.exception))
 
     def test_preflight_fails_when_one_role_is_missing(self):
@@ -795,6 +805,191 @@ class TestCliExitCodes(unittest.TestCase):
         config = {"protected_users": [PROTECTED_UPN], "protected_devices": []}
         code = self._run(["contain", "--user", PROTECTED_UPN, "--execute", "--yes"], config=config)
         self.assertEqual(code, 3)
+
+
+MDE_ROLES = ["Machine.Read.All", "Machine.Isolate"]
+
+
+class TestLeastPrivilege(TestAuth):
+    """Narrow Graph roles are accepted in place of User.ReadWrite.All."""
+
+    def test_narrow_roles_pass(self):
+        graph = ["User.Read.All", "User.RevokeSessions.All", "User.EnableDisableAccount.All"]
+        self.assertEqual(set(self._provider(graph, MDE_ROLES).preflight().values()), {True})
+
+    def test_revoke_only_passes_and_warns_about_disable(self):
+        provider = self._provider(["User.Read.All", "User.RevokeSessions.All"], MDE_ROLES)
+        with self.assertLogs("dair_containment.auth", level="WARNING") as logs:
+            provider.preflight()
+        self.assertIn("--disable-account", "\n".join(logs.output))
+
+    def test_read_without_revoke_fails(self):
+        with self.assertRaises(AuthError) as ctx:
+            self._provider(["User.Read.All"], MDE_ROLES).preflight()
+        self.assertIn("User.RevokeSessions.All", str(ctx.exception))
+
+
+def _actions(result):
+    return [(r.action, r.status) for r in result.results]
+
+
+class TestIdentityStepsReportedSeparately(unittest.TestCase):
+    """Lab finding #20: a refused disable must not hide a revocation that happened."""
+
+    def test_disable_refused_after_revoke_shows_both(self):
+        denied = ApiError("PATCH /users/x -> HTTP 403", status_code=403)
+        entra = FakeEntra(patch_fails=denied)
+        result = _loop(entra=entra).contain(
+            host=None, user="admin@example.org", comment="t", disable_account=True, execute=True
+        )
+        self.assertEqual(_actions(result), [("entra.revoke", "OK"), ("entra.disable", "FAILED")])
+        self.assertFalse(result.ok)
+        self.assertEqual(entra.revoked, [entra.revoked[0]])
+
+    def test_guest_is_disabled_then_revoked_in_the_report(self):
+        entra = FakeEntra(user_type="Guest")
+        result = _loop(entra=entra).contain(
+            host=None,
+            user="g_x.com#EXT#@example.org",
+            comment="t",
+            disable_account=True,
+            execute=True,
+        )
+        self.assertEqual(entra.calls, ["disable", "revoke"])
+        self.assertEqual(_actions(result), [("entra.disable", "OK"), ("entra.revoke", "OK")])
+
+    def test_dry_run_lists_each_planned_step(self):
+        result = _loop().contain(
+            host=None, user="alice@example.org", comment="t", disable_account=True
+        )
+        self.assertEqual(
+            _actions(result), [("entra.revoke", "WOULD RUN"), ("entra.disable", "WOULD RUN")]
+        )
+
+    def test_already_disabled_account_is_not_patched(self):
+        entra = FakeEntra(enabled=False)
+        result = _loop(entra=entra).contain(
+            host=None, user="alice@example.org", comment="t", disable_account=True, execute=True
+        )
+        self.assertEqual(entra.calls, ["revoke"])
+        self.assertIn(("entra.disable", "NO CHANGE"), _actions(result))
+
+
+class TestAcceptedIsNotInEffect(unittest.TestCase):
+    """Lab finding #13: an MDE action that was only accepted is not [OK]."""
+
+    def test_isolation_is_reported_as_accepted_with_a_status_hint(self):
+        result = _loop().contain(host="WS-1234", user=None, comment="t", execute=True)
+        line = result.report()
+        self.assertIn("[ACCEPTED] mde.isolate", line)
+        self.assertNotIn("[OK]", line)
+        self.assertIn("status --host WS-1234 --wait", line)
+        self.assertTrue(result.ok, "accepted is not a failure")
+
+    def test_release_is_reported_as_accepted(self):
+        result = _loop().release(host="WS-1234", user=None, comment="t", execute=True)
+        self.assertIn("[ACCEPTED] mde.release", result.report())
+
+
+class TestReleaseDoesOnlyWhatIsNeeded(unittest.TestCase):
+    """Lab finding #19: enabling an enabled account reported [OK] for a no-op."""
+
+    def test_enable_on_an_enabled_account_sends_nothing(self):
+        entra = FakeEntra(enabled=True)
+        result = _loop(entra=entra).release(
+            host=None, user="alice@example.org", comment="t", enable_account=True, execute=True
+        )
+        self.assertEqual(entra.calls, [])
+        self.assertEqual(_actions(result), [("entra.enable", "NO CHANGE")])
+
+    def test_enable_on_a_disabled_account_enables_it(self):
+        entra = FakeEntra(enabled=False)
+        result = _loop(entra=entra).release(
+            host=None, user="alice@example.org", comment="t", enable_account=True, execute=True
+        )
+        self.assertEqual(entra.calls, ["enable"])
+        self.assertEqual(_actions(result), [("entra.enable", "OK")])
+
+    def test_release_user_without_enable_changes_nothing_and_flags_disabled(self):
+        entra = FakeEntra(enabled=False)
+        result = _loop(entra=entra).release(
+            host=None, user="alice@example.org", comment="t", execute=True
+        )
+        self.assertEqual(entra.calls, [])
+        self.assertIn("--enable-account", result.report())
+
+
+class TestSingleHalfReporting(unittest.TestCase):
+    """Lab findings #9 and #16: no concurrency claims when only one half ran."""
+
+    def test_single_half_has_no_timing_comparison(self):
+        report = _loop().contain(host=None, user="alice@example.org", comment="t").report()
+        self.assertIn("Elapsed", report)
+        self.assertNotIn("Sequential", report)
+        self.assertNotIn("concurrent", report)
+
+    def test_two_halves_keep_the_comparison(self):
+        report = _loop().contain(host="WS-1234", user="alice@example.org", comment="t").report()
+        self.assertIn("Sequential", report)
+
+    def test_banner_does_not_claim_both_halves_ran(self):
+        self.assertNotIn("executed concurrently", cli.BANNER)
+
+
+class TestGuestWarning(unittest.TestCase):
+    """Lab finding #22: guest advice only where it applies."""
+
+    def _warnings(self, fn):
+        # assertNoLogs needs Python 3.10; collect records directly instead.
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logger = logging.getLogger("dair_containment")
+        logger.addHandler(handler)
+        try:
+            fn()
+        finally:
+            logger.removeHandler(handler)
+        return "\n".join(r.getMessage() for r in records if "GUEST" in r.getMessage())
+
+    def test_warns_when_guest_contained_without_disable(self):
+        loop = _loop(entra=FakeEntra(user_type="Guest"))
+        text = self._warnings(lambda: loop.contain(host=None, user="g@x", comment="t"))
+        self.assertIn("--disable-account", text)
+
+    def test_silent_when_disable_requested(self):
+        loop = _loop(entra=FakeEntra(user_type="Guest"))
+        text = self._warnings(
+            lambda: loop.contain(host=None, user="g@x", comment="t", disable_account=True)
+        )
+        self.assertEqual(text, "")
+
+    def test_silent_on_release(self):
+        loop = _loop(entra=FakeEntra(user_type="Guest", enabled=False))
+        text = self._warnings(
+            lambda: loop.release(host=None, user="g@x", comment="t", enable_account=True)
+        )
+        self.assertEqual(text, "")
+
+
+class TestUtcLogging(unittest.TestCase):
+    """Lab finding #17: log times are UTC, like every API timestamp."""
+
+    def test_log_formatter_uses_utc(self):
+        root = logging.getLogger()
+        saved = root.handlers[:]
+        root.handlers = []
+        try:
+            cli._configure_logging(False)
+            fmt = root.handlers[0].formatter
+            self.assertIs(fmt.converter, time.gmtime)
+            self.assertTrue(fmt.datefmt.endswith("Z"))
+        finally:
+            root.handlers = saved
+
+    def test_wait_default_outlasts_the_slowest_measured_release(self):
+        args = cli._build_parser().parse_args(["status", "--host", "x"])
+        self.assertGreater(args.timeout, 796)
 
 
 if __name__ == "__main__":

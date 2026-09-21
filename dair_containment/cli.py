@@ -59,17 +59,20 @@ class ConfigError(ValueError):
 
 BANNER = r"""
   DAIR CONTAINMENT LOOP
-  Endpoint isolation + identity revocation, executed concurrently.
+  Endpoint isolation and identity containment, run concurrently when both are targeted.
 """
 
 
 def _configure_logging(verbose: bool) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stderr,
+    # UTC throughout. MDE and Graph timestamps are UTC, and an incident
+    # timeline that mixes local log times with UTC API times invites mistakes.
+    handler = logging.StreamHandler(sys.stderr)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%SZ"
     )
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, handlers=[handler])
     # msal and urllib3 are noisy and can echo request metadata at DEBUG.
     logging.getLogger("msal").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -216,7 +219,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Poll until any in-flight isolate or release has taken effect, or --timeout.",
     )
     status.add_argument(
-        "--timeout", type=int, default=600, help="Seconds to wait with --wait (default 600)."
+        "--timeout",
+        type=int,
+        default=1200,
+        help="Seconds to wait with --wait (default 1200). Releases have been measured "
+        "taking over 13 minutes to take effect.",
     )
     status.add_argument(
         "--interval", type=int, default=10, help="Seconds between polls with --wait (default 10)."
@@ -334,7 +341,8 @@ def _run_status(args: argparse.Namespace, tokens: TokenProvider) -> int:
         lines.append(
             "  Sessions valid from : "
             f"{_fmt_time(user.get('signInSessionsValidFromDateTime'))}"
-            "  (tokens issued before this are revoked)"
+            "  (sessions issued before this time are invalid; a time at or after "
+            "containment confirms the revocation)"
         )
         report["user"] = {
             "object_id": user.get("id"),
@@ -482,7 +490,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "ok": result.ok,
                     "wall_clock_ms": result.wall_clock_ms,
                     "sequential_ms": result.serial_ms,
-                    "actions": [vars(r) for r in result.results],
+                    "actions": [{**vars(r), "status": r.status} for r in result.results],
                 },
                 indent=2,
                 default=str,

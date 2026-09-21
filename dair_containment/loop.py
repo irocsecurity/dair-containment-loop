@@ -45,7 +45,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
 from .audit import AuditLog
 from .client import ApiError
-from .defender import DefenderClient, MachineNotFound
+from .defender import IN_FLIGHT, DefenderClient, MachineNotFound
 from .entra import EntraClient, PrincipalNotFound
 
 LOG = logging.getLogger(__name__)
@@ -176,6 +176,14 @@ class ActionResult:
     detail: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
     skipped: bool = False
+    # Which half of the loop this belongs to ("host" or "user"). One half can
+    # produce several results -- revoke and disable are reported separately.
+    half: str = ""
+    # The request was accepted but has not taken effect yet (MDE machine actions).
+    pending: bool = False
+    # Nothing needed doing, so nothing was sent.
+    unchanged: bool = False
+    note: Optional[str] = None
 
     @property
     def status(self) -> str:
@@ -185,12 +193,20 @@ class ActionResult:
             return "NOT RUN"
         if not self.ok:
             return "FAILED"
-        return "WOULD RUN" if self.mode == "dry-run" else "OK"
+        if self.unchanged:
+            return "NO CHANGE"
+        if self.mode == "dry-run":
+            return "WOULD RUN"
+        # Accepted is not the same as in effect. [OK] is reserved for actions
+        # that are done when the call returns.
+        return "ACCEPTED" if self.pending else "OK"
 
     def summary(self) -> str:
         line = f"[{self.status}] {self.action} -> {self.target} ({self.elapsed_ms} ms)"
         if self.error:
             line += f"\n         {'reason' if self.skipped else 'error'}: {self.error}"
+        if self.note:
+            line += f"\n         note: {self.note}"
         return line
 
 
@@ -204,14 +220,28 @@ class LoopResult:
     def ok(self) -> bool:
         return all(r.ok for r in self.results)
 
+    def _half_elapsed(self) -> Dict[str, int]:
+        # Steps within one half run in sequence and carry cumulative timings,
+        # so a half costs as long as its slowest step.
+        halves: Dict[str, int] = {}
+        for r in self.results:
+            key = r.half or r.action
+            halves[key] = max(halves.get(key, 0), r.elapsed_ms)
+        return halves
+
     @property
     def serial_ms(self) -> int:
         """What this would have cost run sequentially."""
-        return sum(r.elapsed_ms for r in self.results)
+        return sum(self._half_elapsed().values())
 
     def report(self) -> str:
         lines = [r.summary() for r in self.results]
         lines.append("")
+        if len(self._half_elapsed()) < 2:
+            # One half ran, so there was nothing to run concurrently and
+            # nothing to compare against.
+            lines.append(f"Elapsed    : {self.wall_clock_ms} ms")
+            return "\n".join(lines)
         lines.append(f"Wall clock : {self.wall_clock_ms} ms (concurrent)")
         if not self.ok:
             # A time saving is only meaningful when containment actually
@@ -247,6 +277,29 @@ def _run_concurrently(tasks: List[Callable[[], Any]]) -> List[Any]:
     """Run callables concurrently and return results in submission order."""
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         return list(pool.map(lambda task: task(), tasks))
+
+
+def _user_steps(user: Dict[str, Any], disable_account: bool) -> List[str]:
+    """The identity actions to take, in order.
+
+    Guests are disabled first, then revoked. Their credential lives in their
+    home organisation, so a guest whose sessions are revoked while the object
+    is still enabled can sign straight back in before the disable lands.
+    """
+    if not disable_account:
+        return ["revoke"]
+    if user.get("userType") == "Guest":
+        return ["disable", "revoke"]
+    return ["revoke", "disable"]
+
+
+def _pending_note(action: Dict[str, Any], verb: str, target: str) -> Optional[str]:
+    if (action or {}).get("status") not in IN_FLIGHT:
+        return None
+    return (
+        f"Defender has accepted the {verb}; it is not in effect yet. "
+        f"Confirm with: dair-contain status --host {target} --wait"
+    )
 
 
 class ContainmentLoop:
@@ -361,6 +414,15 @@ class ContainmentLoop:
             target = user.get("userPrincipalName") or identifier
             self._check_user(identifier, target, user.get("id", ""))
 
+            if user.get("userType") == "Guest" and not disable_account:
+                LOG.warning(
+                    "%s is a GUEST (B2B) account. Revoking its sessions will not keep it "
+                    "out: the guest can sign in again through their home organisation, "
+                    "which this tool cannot reach. Re-run with --disable-account to block "
+                    "access to this tenant, and notify the guest's home organisation.",
+                    target,
+                )
+
             return _Orientation(
                 half="user",
                 action=action,
@@ -393,9 +455,10 @@ class ContainmentLoop:
             action = self._mde.isolate(o.subject["id"], comment, isolation_type)
             detail["machine_action_id"] = (action or {}).get("id")
             detail["action_status"] = (action or {}).get("status")
+            note = _pending_note(action, "isolation", o.target)
             error = None
         except ApiError as exc:
-            error = str(exc)
+            error, note = str(exc), None
         return ActionResult(
             action=o.action,
             target=o.target,
@@ -405,42 +468,86 @@ class ContainmentLoop:
             undo_hint=f"dair-contain release --host {o.target}",
             detail=detail,
             error=error,
+            half="host",
+            pending=note is not None,
+            note=note,
         )
 
-    def _act_user(self, o: _Orientation, disable_account: bool) -> ActionResult:
+    def _plan_user(self, o: _Orientation, disable_account: bool, mode: str) -> List[ActionResult]:
+        """Dry run: one result per identity action that --execute would take."""
+        results = []
+        for step in _user_steps(o.subject, disable_account):
+            unchanged = step == "disable" and o.subject.get("accountEnabled") is False
+            results.append(
+                ActionResult(
+                    f"entra.{step}",
+                    o.target,
+                    True,
+                    mode,
+                    o.elapsed_ms,
+                    undo_hint=self._user_undo(step, o.target),
+                    detail=o.detail,
+                    half="user",
+                    unchanged=unchanged,
+                    note="account is already disabled" if unchanged else None,
+                )
+            )
+        return results
+
+    @staticmethod
+    def _user_undo(step: str, target: str) -> str:
+        if step == "disable":
+            return f"dair-contain release --user {target} --enable-account"
+        return "none needed: the user signs in again once the incident is closed"
+
+    def _act_user(self, o: _Orientation, disable_account: bool) -> List[ActionResult]:
+        """Run each identity action and report each one separately.
+
+        Every step is attempted even if an earlier one failed: a revocation that
+        succeeded is still worth having when the disable is refused, and the
+        responder must be able to see that it happened.
+        """
         started = time.monotonic()
-        detail = dict(o.detail)
         user = o.subject
-        try:
-            # Guests: disable first, then revoke. Revoking a guest's sessions
-            # without disabling the object achieves nothing -- the home tenant
-            # re-issues via SSO immediately.
-            if disable_account and user.get("userType") == "Guest":
-                self._entra.set_account_enabled(user["id"], False)
-                detail["disabled"] = True
-                self._entra.revoke_sessions(user["id"])
-                detail["revoked"] = True
-            else:
-                self._entra.revoke_sessions(user["id"])
-                detail["revoked"] = True
-                if disable_account:
+        results = []
+        for step in _user_steps(user, disable_account):
+            detail = dict(o.detail)
+            error: Optional[str] = None
+            unchanged = False
+            note: Optional[str] = None
+            try:
+                if step == "revoke":
+                    self._entra.revoke_sessions(user["id"])
+                    detail["revoked"] = True
+                    try:
+                        detail["sessions_valid_from_after"] = self._entra.sessions_valid_from(
+                            user["id"]
+                        )
+                    except ApiError as exc:
+                        note = f"revoked, but the new watermark could not be read back: {exc}"
+                elif user.get("accountEnabled") is False:
+                    unchanged, note = True, "account was already disabled"
+                else:
                     self._entra.set_account_enabled(user["id"], False)
                     detail["disabled"] = True
-
-            detail["sessions_valid_from_after"] = self._entra.sessions_valid_from(user["id"])
-            error = None
-        except ApiError as exc:
-            error = str(exc)
-        return ActionResult(
-            action=o.action,
-            target=o.target,
-            ok=error is None,
-            mode="execute",
-            elapsed_ms=o.elapsed_ms + _elapsed_ms(started),
-            undo_hint=f"dair-contain release --user {o.target}",
-            detail=detail,
-            error=error,
-        )
+            except ApiError as exc:
+                error = str(exc)
+            results.append(
+                ActionResult(
+                    action=f"entra.{step}",
+                    target=o.target,
+                    ok=error is None,
+                    mode="execute",
+                    elapsed_ms=o.elapsed_ms + _elapsed_ms(started),
+                    undo_hint=self._user_undo(step, o.target),
+                    detail=detail,
+                    error=error,
+                    half="user",
+                    unchanged=unchanged,
+                    note=note,
+                )
+            )
+        return results
 
     # -- public API --------------------------------------------------------
 
@@ -488,6 +595,7 @@ class ContainmentLoop:
                     detail=o.detail,
                     error=o.error or "not executed: another target was refused by the guardrail",
                     skipped=not o.refused,
+                    half=o.half,
                 )
                 self._audit_result(blocked, "refused" if o.refused else "not-executed")
             raise ProtectedPrincipalError(refused[0].error or "REFUSED by guardrail.")
@@ -509,6 +617,7 @@ class ContainmentLoop:
                         "containment only acts when every target resolves"
                     ),
                     skipped=not o.error,
+                    half=o.half,
                 )
                 for o in orientations
             ]
@@ -517,27 +626,33 @@ class ContainmentLoop:
             return LoopResult(results, _elapsed_ms(started), mode)
 
         # Act -- both halves concurrently, only after every half oriented cleanly.
+        results: List[ActionResult] = []
         if execute:
-            act: List[Callable[[], ActionResult]] = []
+            act: List[Callable[[], List[ActionResult]]] = []
             for o in orientations:
                 if o.half == "host":
-                    act.append(lambda o=o: self._act_host(o, comment, isolation_type))
+                    act.append(lambda o=o: [self._act_host(o, comment, isolation_type)])
                 else:
                     act.append(lambda o=o: self._act_user(o, disable_account))
-            results = _run_concurrently(act)
+            for group in _run_concurrently(act):
+                results.extend(group)
         else:
-            results = [
-                ActionResult(
-                    o.action,
-                    o.target,
-                    True,
-                    mode,
-                    o.elapsed_ms,
-                    undo_hint=f"dair-contain release --{o.half} {o.target}",
-                    detail=o.detail,
-                )
-                for o in orientations
-            ]
+            for o in orientations:
+                if o.half == "host":
+                    results.append(
+                        ActionResult(
+                            o.action,
+                            o.target,
+                            True,
+                            mode,
+                            o.elapsed_ms,
+                            undo_hint=f"dair-contain release --host {o.target}",
+                            detail=o.detail,
+                            half="host",
+                        )
+                    )
+                else:
+                    results.extend(self._plan_user(o, disable_account, mode))
 
         for r in results:
             self._audit_result(r)
@@ -572,20 +687,33 @@ class ContainmentLoop:
                     "machine_id": machine["id"],
                     "computer_dns_name": machine.get("computerDnsName"),
                 }
+                name = machine.get("computerDnsName") or host or "?"
+                note = None
                 if execute:
                     action = self._mde.release(machine["id"], comment)
                     detail["machine_action_id"] = (action or {}).get("id")
+                    detail["action_status"] = (action or {}).get("status")
+                    note = _pending_note(action, "release", name)
                 res = ActionResult(
                     "mde.release",
-                    machine.get("computerDnsName", host),
+                    name,
                     True,
                     mode,
                     _elapsed_ms(started),
                     detail=detail,
+                    half="host",
+                    pending=note is not None,
+                    note=note,
                 )
             except (ApiError, MachineNotFound) as exc:
                 res = ActionResult(
-                    "mde.release", host or "?", False, mode, _elapsed_ms(started), error=str(exc)
+                    "mde.release",
+                    host or "?",
+                    False,
+                    mode,
+                    _elapsed_ms(started),
+                    error=str(exc),
+                    half="host",
                 )
             self._audit_result(res)
             return res
@@ -600,7 +728,20 @@ class ContainmentLoop:
                     "upn": u.get("userPrincipalName"),
                     "account_enabled_before": u.get("accountEnabled"),
                 }
-                if execute and enable_account:
+                already_enabled = u.get("accountEnabled") is not False
+                unchanged, note = False, None
+                if not enable_account:
+                    # Revocation has no undo -- the user simply signs in again.
+                    # Only a disable needs reversing, and only when asked.
+                    unchanged = True
+                    note = "nothing to reverse: revoked sessions need no undo" + (
+                        ""
+                        if already_enabled
+                        else "; the account is DISABLED -- pass --enable-account to re-enable it"
+                    )
+                elif already_enabled:
+                    unchanged, note = True, "account was already enabled"
+                elif execute:
                     self._entra.set_account_enabled(u["id"], True)
                     detail["enabled"] = True
                 res = ActionResult(
@@ -610,10 +751,19 @@ class ContainmentLoop:
                     mode,
                     _elapsed_ms(started),
                     detail=detail,
+                    half="user",
+                    unchanged=unchanged,
+                    note=note,
                 )
             except (ApiError, PrincipalNotFound) as exc:
                 res = ActionResult(
-                    "entra.enable", user or "?", False, mode, _elapsed_ms(started), error=str(exc)
+                    "entra.enable",
+                    user or "?",
+                    False,
+                    mode,
+                    _elapsed_ms(started),
+                    error=str(exc),
+                    half="user",
                 )
             self._audit_result(res)
             return res

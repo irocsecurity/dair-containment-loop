@@ -85,14 +85,9 @@ class EntraClient(BaseApiClient):
             bool(user.get("onPremisesSyncEnabled")),
         )
 
-        if user.get("userType") == "Guest":
-            LOG.warning(
-                "%s is a GUEST (B2B) principal. Session revocation alone is NOT containment: "
-                "the credential and session live in the home tenant, and the guest will "
-                "re-authenticate via SSO within seconds. Disable the guest object "
-                "(--disable-account) and notify the home tenant.",
-                user.get("userPrincipalName"),
-            )
+        # Guest-specific advice depends on what the operator is doing, so it is
+        # given by the containment loop, not here -- resolution also serves
+        # release and status, where "disable the guest" would be wrong.
 
         if user.get("onPremisesSyncEnabled"):
             LOG.warning(

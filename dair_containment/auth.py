@@ -41,11 +41,34 @@ AUTHORITY_TEMPLATE = "https://login.microsoftonline.com/{tenant_id}"
 # preflight against the roles actually present in the issued token -- a token is
 # issued successfully even when *no* permission has been admin-consented, so
 # acquiring one proves nothing about whether containment can act.
-#
-# User.ReadWrite.All includes read, so User.Read.All is not additionally required.
 REQUIRED_ROLES: Dict[str, FrozenSet[str]] = {
-    GRAPH_RESOURCE: frozenset({"User.ReadWrite.All"}),
     MDE_RESOURCE: frozenset({"Machine.Read.All", "Machine.Isolate"}),
+}
+
+# Graph capabilities, each satisfied by any one of its roles. The narrow roles
+# are recommended; User.ReadWrite.All also works, but can rewrite any attribute
+# of any user, which is far more than containment needs.
+#
+#   capability      recommended               also accepted
+#   read            User.Read.All             User.ReadWrite.All
+#   revoke          User.RevokeSessions.All   User.ReadWrite.All
+#   enable/disable  User.EnableDisableAccount.All (+ User.Read.All)
+#                                             User.ReadWrite.All
+#
+# enable/disable is optional: without it, revocation works and only
+# --disable-account / --enable-account will fail. None of these roles can
+# disable an account that holds an Entra admin role; that also requires an
+# admin role assigned to the app, which this tool deliberately does not ask for.
+GRAPH_CAPABILITIES: Dict[str, FrozenSet[str]] = {
+    "read": frozenset({"User.Read.All", "User.ReadWrite.All"}),
+    "revoke": frozenset({"User.RevokeSessions.All", "User.ReadWrite.All"}),
+    "enable/disable": frozenset({"User.EnableDisableAccount.All", "User.ReadWrite.All"}),
+}
+GRAPH_REQUIRED = ("read", "revoke")
+GRAPH_RECOMMENDED = {
+    "read": "User.Read.All",
+    "revoke": "User.RevokeSessions.All",
+    "enable/disable": "User.EnableDisableAccount.All",
 }
 
 
@@ -207,7 +230,6 @@ class TokenProvider:
         problems = []
         for resource in (GRAPH_RESOURCE, MDE_RESOURCE):
             token = self.get_token(resource)
-            required = REQUIRED_ROLES[resource]
             try:
                 granted = token_roles(token)
             except AuthError as exc:
@@ -215,12 +237,31 @@ class TokenProvider:
                 results[resource] = True
                 continue
 
-            missing = sorted(required - granted)
+            if resource == GRAPH_RESOURCE:
+                missing = [
+                    GRAPH_RECOMMENDED[cap]
+                    for cap in GRAPH_REQUIRED
+                    if not GRAPH_CAPABILITIES[cap] & granted
+                ]
+                if not GRAPH_CAPABILITIES["enable/disable"] & granted:
+                    LOG.warning(
+                        "Graph token lacks %s: session revocation will work, but "
+                        "--disable-account and --enable-account will fail.",
+                        GRAPH_RECOMMENDED["enable/disable"],
+                    )
+                if "User.ReadWrite.All" in granted:
+                    LOG.info(
+                        "User.ReadWrite.All is broader than containment needs. Consider "
+                        "User.Read.All + User.RevokeSessions.All + User.EnableDisableAccount.All."
+                    )
+            else:
+                missing = sorted(REQUIRED_ROLES[resource] - granted)
+
             if missing:
                 problems.append(f"{resource} is missing application role(s): {', '.join(missing)}")
                 results[resource] = False
             else:
-                LOG.info("Preflight OK: %s (roles: %s)", resource, ", ".join(sorted(required)))
+                LOG.info("Preflight OK: %s", resource)
                 results[resource] = True
 
         if problems:
