@@ -320,13 +320,14 @@ class ContainmentLoop:
             self._check_device(identifier, target, machine.get("id", ""))
 
             existing = self._mde.active_isolation(machine["id"])
-            if existing and existing.get("status") in ("Pending", "InProgress", "Succeeded"):
+            if existing:
                 LOG.warning(
-                    "Machine %s already has an isolation action (%s, status=%s). Proceeding anyway; "
-                    "MDE will reconcile.",
+                    "Machine %s is already isolated or has an isolation change in flight "
+                    "(%s %s, id %s). Proceeding anyway; MDE will reconcile.",
                     target,
-                    existing.get("id"),
+                    existing.get("type"),
                     existing.get("status"),
+                    existing.get("id"),
                 )
 
             return _Orientation(

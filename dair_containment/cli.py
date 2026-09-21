@@ -18,11 +18,20 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .audit import AuditLog
 from .auth import AppCredentials, AuthError, TokenProvider
-from .defender import ISOLATION_TYPES, DefenderClient
+from .client import ApiError
+from .defender import (
+    ISOLATION_TYPES,
+    DefenderClient,
+    IsolationState,
+    action_duration_s,
+    isolation_state,
+    parse_mde_time,
+)
 from .entra import EntraClient
 from .loop import (
     ContainmentLoop,
@@ -194,7 +203,152 @@ def _build_parser() -> argparse.ArgumentParser:
         "preflight", parents=[common], help="Validate credentials and API reachability, then exit."
     )
 
+    status = sub.add_parser(
+        "status",
+        parents=[common],
+        help="Show whether containment has actually taken effect. Read-only.",
+    )
+    status.add_argument("--host", help="Device hostname or MDE machine id.")
+    status.add_argument("--user", help="User principal name or Entra object id.")
+    status.add_argument(
+        "--wait",
+        action="store_true",
+        help="Poll until any in-flight isolate or release has taken effect, or --timeout.",
+    )
+    status.add_argument(
+        "--timeout", type=int, default=600, help="Seconds to wait with --wait (default 600)."
+    )
+    status.add_argument(
+        "--interval", type=int, default=10, help="Seconds between polls with --wait (default 10)."
+    )
+
     return parser
+
+
+# -- status ------------------------------------------------------------------
+
+# Read-only commands change nothing, so they neither need the guardrail config
+# nor write audit records.
+READ_ONLY_COMMANDS = ("preflight", "status")
+
+
+def _fmt_time(value: Optional[str]) -> str:
+    parsed = parse_mde_time(value)
+    return parsed.strftime("%Y-%m-%d %H:%M:%SZ") if parsed else (value or "?")
+
+
+def _describe_action(action: Dict[str, Any]) -> str:
+    line = (
+        f"{action.get('type', '?'):<9} {action.get('status', '?'):<10} "
+        f"requested {_fmt_time(action.get('creationDateTimeUtc'))}"
+    )
+    duration = action_duration_s(action)
+    if duration is not None:
+        line += f", took {duration:.0f}s"
+    if action.get("requestor"):
+        line += f" by {action['requestor']}"
+    return line
+
+
+def _wait_until_settled(
+    fetch: Callable[[], Tuple[IsolationState, List[Dict[str, Any]]]],
+    timeout: int,
+    interval: int,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> Tuple[IsolationState, List[Dict[str, Any]]]:
+    """Poll until no isolate/release is in flight, or the timeout passes."""
+    deadline = clock() + timeout
+    state, actions = fetch()
+    last_label = None
+    while True:
+        if state.label != last_label:
+            LOG.info("Status: %s", state.label)
+            last_label = state.label
+        if state.settled or clock() >= deadline:
+            return state, actions
+        sleep(max(0.0, min(interval, deadline - clock())))
+        state, actions = fetch()
+
+
+def _run_status(args: argparse.Namespace, tokens: TokenProvider) -> int:
+    code = EXIT_OK
+    report: Dict[str, Any] = {}
+    lines: List[str] = []
+
+    if args.host:
+        mde = DefenderClient(tokens)
+        try:
+            machine = mde.resolve_machine(args.host)
+
+            def fetch() -> Tuple[IsolationState, List[Dict[str, Any]]]:
+                actions = mde.isolation_actions(machine["id"])
+                return isolation_state(actions), actions
+
+            if args.wait:
+                state, actions = _wait_until_settled(fetch, args.timeout, args.interval)
+            else:
+                state, actions = fetch()
+        except ApiError as exc:
+            LOG.error("%s", exc)
+            return EXIT_ACTION_FAILED
+
+        name = machine.get("computerDnsName") or args.host
+        lines.append(f"{name}  (machine {machine['id']})")
+        lines.append(f"  State   : {state.label}")
+        if actions:
+            lines.append("  History :")
+            lines.extend(f"    {_describe_action(a)}" for a in actions[:5])
+        else:
+            lines.append("  History : no isolate or release actions on record")
+
+        if state.last_failed:
+            code = EXIT_ACTION_FAILED
+        if args.wait and not state.settled:
+            lines.append(
+                f"  Timed out after {args.timeout}s -- the {state.pending} has not taken effect."
+            )
+            code = EXIT_ACTION_FAILED
+
+        report["host"] = {
+            "machine_id": machine["id"],
+            "name": name,
+            "state": state.label,
+            "isolated": state.isolated,
+            "pending": state.pending,
+            "settled": state.settled,
+            "history": actions[:5],
+        }
+
+    if args.user:
+        try:
+            user = EntraClient(tokens).resolve_user(args.user)
+        except ApiError as exc:
+            LOG.error("%s", exc)
+            return EXIT_ACTION_FAILED
+
+        upn = user.get("userPrincipalName") or args.user
+        lines.append(f"{upn}  (user {user.get('id')})")
+        lines.append(f"  Enabled             : {user.get('accountEnabled')}")
+        lines.append(f"  Type                : {user.get('userType')}")
+        lines.append(
+            "  Sessions valid from : "
+            f"{_fmt_time(user.get('signInSessionsValidFromDateTime'))}"
+            "  (tokens issued before this are revoked)"
+        )
+        report["user"] = {
+            "object_id": user.get("id"),
+            "upn": upn,
+            "account_enabled": user.get("accountEnabled"),
+            "user_type": user.get("userType"),
+            "sessions_valid_from": user.get("signInSessionsValidFromDateTime"),
+        }
+
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        print("\n" + "\n".join(lines) + "\n")
+    return code
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -208,11 +362,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     # first. Constructing the auth client performs network I/O, and a guardrail
     # that only gets evaluated after the network is reachable is not a guardrail.
     guardrails = {"protected_users": [], "protected_devices": []}
-    if args.command != "preflight":
-        if not args.host and not args.user:
-            LOG.error("Specify --host, --user, or both.")
-            return EXIT_USAGE
+    if args.command != "preflight" and not args.host and not args.user:
+        LOG.error("Specify --host, --user, or both.")
+        return EXIT_USAGE
 
+    if args.command not in READ_ONLY_COMMANDS:
         try:
             guardrails = _load_guardrails(args.config)
         except ConfigError as exc:
@@ -270,6 +424,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "each carrying the application roles containment requires."
         )
         return EXIT_OK
+
+    if args.command == "status":
+        return _run_status(args, tokens)
 
     loop = ContainmentLoop(
         defender=DefenderClient(tokens),

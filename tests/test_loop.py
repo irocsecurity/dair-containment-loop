@@ -32,7 +32,13 @@ from dair_containment.auth import (  # noqa: E402
     token_roles,
 )
 from dair_containment.client import ApiError  # noqa: E402
-from dair_containment.defender import DefenderClient, MachineNotFound  # noqa: E402
+from dair_containment.defender import (  # noqa: E402
+    DefenderClient,
+    MachineNotFound,
+    action_duration_s,
+    isolation_state,
+    parse_mde_time,
+)
 from dair_containment.entra import EntraClient  # noqa: E402
 from dair_containment.loop import (  # noqa: E402
     ActionResult,
@@ -544,6 +550,168 @@ class TestDeviceResolution(unittest.TestCase):
         with self.assertLogs("dair_containment.defender", level="INFO") as logs:
             mde.resolve_machine(machine_id)
         self.assertIn(f"Resolved '{machine_id}' -> machine {machine_id} (lab-dair1", logs.output[0])
+
+
+def _action(kind, status, created="2026-09-21T03:56:20.1234567Z", updated=None):
+    return {
+        "id": f"{kind}-{status}",
+        "type": kind,
+        "status": status,
+        "creationDateTimeUtc": created,
+        "lastUpdateDateTimeUtc": updated or created,
+    }
+
+
+class TestIsolationState(unittest.TestCase):
+    """Lab finding #13: 'accepted' is not 'in effect'. State comes from action history."""
+
+    def test_no_history_means_not_isolated(self):
+        state = isolation_state([])
+        self.assertFalse(state.isolated)
+        self.assertTrue(state.settled)
+
+    def test_isolation_requested_but_not_yet_in_effect(self):
+        state = isolation_state([_action("Isolate", "Pending")])
+        self.assertFalse(state.isolated, "a pending isolation has not isolated anything yet")
+        self.assertEqual(state.pending, "Isolate")
+        self.assertIn("ISOLATION PENDING", state.label)
+
+    def test_isolation_in_effect(self):
+        state = isolation_state([_action("Isolate", "Succeeded")])
+        self.assertTrue(state.isolated)
+        self.assertEqual(state.label, "ISOLATED")
+
+    def test_release_requested_device_still_isolated(self):
+        """Exactly what the lab hit: release reported [OK], device still cut off."""
+        state = isolation_state([_action("Unisolate", "Pending"), _action("Isolate", "Succeeded")])
+        self.assertTrue(state.isolated)
+        self.assertEqual(state.pending, "Unisolate")
+        self.assertIn("RELEASE PENDING", state.label)
+        self.assertIn("still isolated", state.label)
+
+    def test_release_in_effect(self):
+        state = isolation_state(
+            [_action("Unisolate", "Succeeded"), _action("Isolate", "Succeeded")]
+        )
+        self.assertFalse(state.isolated)
+        self.assertEqual(state.label, "NOT ISOLATED")
+
+    def test_failed_release_leaves_device_isolated_and_says_so(self):
+        state = isolation_state([_action("Unisolate", "Failed"), _action("Isolate", "Succeeded")])
+        self.assertTrue(state.isolated)
+        self.assertTrue(state.last_failed)
+        self.assertIn("Unisolate Failed", state.label)
+
+    def test_other_action_types_are_ignored(self):
+        scan = {"id": "s", "type": "RunAntiVirusScan", "status": "Pending"}
+        state = isolation_state([scan, _action("Isolate", "Succeeded")])
+        self.assertTrue(state.isolated)
+        self.assertTrue(state.settled)
+
+
+class TestActiveIsolationAfterRelease(unittest.TestCase):
+    """Lab finding #14: a released isolation must not be reported as active."""
+
+    def _mde(self, actions):
+        client = DefenderClient.__new__(DefenderClient)
+        client.get = lambda path, params=None: {"value": actions}  # type: ignore[method-assign]
+        return client
+
+    def test_released_isolation_is_not_active(self):
+        mde = self._mde([_action("Unisolate", "Succeeded"), _action("Isolate", "Succeeded")])
+        self.assertIsNone(mde.active_isolation("m" * 40))
+
+    def test_current_isolation_is_active(self):
+        mde = self._mde([_action("Isolate", "Succeeded")])
+        self.assertEqual(mde.active_isolation("m" * 40)["type"], "Isolate")
+
+
+class TestMdeTimestamps(unittest.TestCase):
+    def test_parses_seven_fractional_digits_and_z(self):
+        parsed = parse_mde_time("2026-09-21T03:56:20.1234567Z")
+        self.assertEqual((parsed.hour, parsed.minute, parsed.second), (3, 56, 20))
+
+    def test_parses_short_and_absent_fractions(self):
+        """Python < 3.11 rejects fractions that are not exactly 3 or 6 digits."""
+        for value in ("2026-09-21T03:56:20.5Z", "2026-09-21T03:56:20.12Z", "2026-09-21T03:56:20Z"):
+            with self.subTest(value=value):
+                self.assertIsNotNone(parse_mde_time(value))
+
+    def test_duration_of_a_finished_action(self):
+        done = _action("Isolate", "Succeeded", "2026-09-21T03:56:20.0Z", "2026-09-21T03:57:02.5Z")
+        self.assertAlmostEqual(action_duration_s(done), 42.5)
+
+    def test_no_duration_while_in_flight(self):
+        self.assertIsNone(action_duration_s(_action("Unisolate", "Pending")))
+
+
+class TestStatusCommand(unittest.TestCase):
+    """The read-only 'status' command: effect, not acceptance."""
+
+    def test_wait_polls_until_the_action_takes_effect(self):
+        responses = [
+            [_action("Unisolate", "Pending"), _action("Isolate", "Succeeded")],
+            [_action("Unisolate", "InProgress"), _action("Isolate", "Succeeded")],
+            [_action("Unisolate", "Succeeded"), _action("Isolate", "Succeeded")],
+        ]
+
+        def fetch():
+            actions = responses.pop(0)
+            return isolation_state(actions), actions
+
+        state, _ = cli._wait_until_settled(fetch, timeout=60, interval=1, sleep=lambda s: None)
+        self.assertTrue(state.settled)
+        self.assertFalse(state.isolated)
+
+    def test_wait_gives_up_at_the_timeout(self):
+        pending = [_action("Unisolate", "Pending"), _action("Isolate", "Succeeded")]
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        state, _ = cli._wait_until_settled(
+            lambda: (isolation_state(pending), pending),
+            timeout=30,
+            interval=10,
+            sleep=sleep,
+            clock=lambda: now[0],
+        )
+        self.assertFalse(state.settled)
+        self.assertGreaterEqual(now[0], 30)
+
+    def _run_status(self, actions, wait=False):
+        fake = mock.Mock()
+        fake.resolve_machine.return_value = {"id": "m" * 40, "computerDnsName": "lab-dair1"}
+        fake.isolation_actions.return_value = actions
+        args = mock.Mock(host="lab-dair1", user=None, wait=wait, timeout=0, interval=1, json=False)
+        out = io.StringIO()
+        patched = mock.patch("dair_containment.cli.DefenderClient", return_value=fake)
+        with patched, contextlib.redirect_stdout(out):
+            code = cli._run_status(args, tokens=None)
+        return code, out.getvalue()
+
+    def test_status_reports_a_pending_release_as_still_isolated(self):
+        code, out = self._run_status(
+            [_action("Unisolate", "Pending"), _action("Isolate", "Succeeded")]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("RELEASE PENDING", out)
+        self.assertIn("still isolated", out)
+
+    def test_status_exits_nonzero_when_the_latest_action_failed(self):
+        code, out = self._run_status(
+            [_action("Unisolate", "Failed"), _action("Isolate", "Succeeded")]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("ISOLATED", out)
+
+    def test_status_needs_no_guardrail_config(self):
+        """Read-only, so no config required. Exit 2 (no credentials), never 3 (guardrail)."""
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("DAIR_")}
+        quiet = contextlib.redirect_stderr(io.StringIO())
+        with mock.patch.dict(os.environ, clean, clear=True), quiet:
+            self.assertEqual(cli.main(["status", "--host", "lab-dair1"]), 2)
 
 
 class TestConfirmation(unittest.TestCase):
