@@ -60,7 +60,7 @@ Validated against a live Entra ID tenant with a Defender for Endpoint–onboarde
 | Observation | Measured |
 |---|---|
 | Isolation in effect after the API accepted it | 1–4 s |
-| Release in effect after the API accepted it | **6–13 min** (374 s and 796 s) |
+| Release in effect after the API accepted it | **13 s to 13 min** (13 s, 374 s, 796 s across three runs) — unpredictable, so check with `status --wait` |
 | Isolation and session revocation both in effect, run together | within ~5 s |
 | Revoked user signed out of Outlook on the web (CAE) | ~26 s |
 | Host isolation **alone**: user's cloud session after the device came back | **still signed in** — isolation does not contain the identity |
@@ -113,7 +113,7 @@ Guest UPNs contain `#`, so quote them: `--user 'bob_partner.com#EXT#@yourtenant.
 
 ### Checking status
 
-`status` is read-only and needs no guardrail config. For a device it derives the current state from Defender's isolate/release history — `ISOLATED`, `NOT ISOLATED`, or `ISOLATION PENDING` / `RELEASE PENDING` while a request is still in flight — and `--wait` polls until it settles (default timeout 20 minutes, because releases have been measured at over 13). For a user it shows whether the account is enabled and the time from which sessions are valid; a time at or after containment confirms the revocation landed.
+`status` is read-only and needs no guardrail config. For a device it derives the current state from Defender's isolate/release history — `ISOLATED`, `NOT ISOLATED`, or `ISOLATION PENDING` / `RELEASE PENDING` while a request is still in flight — and `--wait` polls until it settles (default timeout 20 minutes, because releases have been measured at anything from 13 seconds to over 13 minutes). For a user it shows whether the account is enabled and the time from which sessions are valid; a time at or after containment confirms the revocation landed.
 
 ---
 
