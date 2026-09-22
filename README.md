@@ -218,7 +218,7 @@ Most of what this tool does can be done other ways. It is worth knowing which on
 
 **[Automatic attack disruption](https://learn.microsoft.com/en-us/defender-xdr/automatic-attack-disruption)** in Microsoft Defender XDR contains devices and disables accounts natively, with no tooling at all. It acts on Microsoft's detections, on Microsoft's timing, and is gated behind Defender XDR licensing. Where it covers your scenario and you are licensed for it, use it — it reacts faster than any human can.
 
-**SOAR playbooks and Logic Apps** — Sentinel, XSOAR, Splunk SOAR, and the various public MDE isolation playbooks — make the same API calls. They need a platform, a subscription, or a Function App to run inside, and their steps execute in sequence.
+**SOAR playbooks and Logic Apps** — Sentinel, XSOAR, Splunk SOAR, and various public MDE isolation playbooks can orchestrate the same underlying API actions. Depending on the workflow design, those actions may be sequential or parallel. They also require a platform, subscription, or supporting automation infrastructure.
 
 **This tool** is for the case those two leave open: a responder who has decided to contain, on their own judgment, right now — with no SOAR platform, no cloud infrastructure, and nothing to review but a single Python package.
 
